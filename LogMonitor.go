@@ -9,6 +9,7 @@
  *   - Input arguments for filenames, polling rate, or log level to monitor
  *   - More flexible log parsing (e.g., support for different log formats or levels)
  *   - More robust error handling (e.g., file access issues)
+ *   - Save to something else than just copying to another text file, like a database or a structured format (e.g., JSON) for easier analysis later on
  *   - Optionally, a simple web interface to display the errors in real-time
  *
  * Note: This is a very basic implementation and needs adjustments based on the specific log format and requirements.
@@ -38,6 +39,8 @@ var (
 	// seenErrors keeps track of unique error messages in memory for fast lookup.
 	// Using a map[string]bool provides O(1) performance compared to O(n) for file scanning.
 	seenErrors = make(map[string]bool)
+	// Filename for the saved errors, generated based on today's date.
+	savedErrorsFilename string
 )
 
 /*
@@ -45,13 +48,22 @@ var (
  * Each log line is expected to contain a timestamp, log level, and message.
  */
 func main() {
-	// 1. Generate filename based on today's date (DevLog_YYYY-MM-DD.txt)
+	// Generate filename based on today's date (DevLog_YYYY-MM-DD.txt)
 	today := time.Now().Format("2006-01-02")
 	logFilename := fmt.Sprintf("DevLog_%s.txt", today)
-	savedErrorsFilename := fmt.Sprintf("SavedErrors_%s.txt", today)
+	savedErrorsFilename = fmt.Sprintf("SavedErrors_%s.txt", today)
 
-	// 2. Pre-populate the map with any errors already in the saved file
-	loadExistingErrors(savedErrorsFilename)
+	// Save the file handle for the saved errors file, so we can keep it open and avoid reopening it for every write.
+	var savedErrorsFile *os.File
+	savedErrorsFile, err := os.OpenFile(savedErrorsFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("Error opening file %s: %v", savedErrorsFilename, err)
+		return
+	}
+	defer savedErrorsFile.Close()
+
+	// Pre-populate the map with any errors already in the saved file
+	loadExistingErrors()
 
 	// Create a context that is cancelled when we receive an interrupt signal
 	// We want to be able to print stuff when we are done, rather than just aborting the application immediately.
@@ -60,14 +72,15 @@ func main() {
 
 	fmt.Printf("👀 Monitoring %s for 'ERROR' level logs...\n", logFilename)
 
-	// 3. Open the logfile
+	// Open the logfile
 	logfile, err := os.Open(logFilename)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer logfile.Close() // Ensure the file is closed when current function is done
 
-	// 4. Save existing lines from the beginning of the log file
+	// Save existing lines from the beginning of the log file.
+	//TODO Can move to separate function?
 	logfileReader := bufio.NewReader(logfile)
 	for {
 		line, err := logfileReader.ReadString('\n')
@@ -76,18 +89,20 @@ func main() {
 				// We've reached the end of existing content
 				break
 			}
+			// If any other error occurs, we should log it.
 			log.Printf("Error reading existing lines: %v", err)
-			break
+			shutdown(1)
+			return
 		}
-		saveErrorLine(line)
+		saveErrorLine(line, savedErrorsFile)
 	}
 
-	// 5. Simple "tail -f" implementation loop,
+	// Simple "tail -f" implementation loop,
 	// continuously checking for new lines and processing them as they come in.
 	for {
 		select {
 		case <-ctx.Done():
-			shutdown()
+			shutdown(0)
 			return
 		default:
 			line, err := logfileReader.ReadString('\n')
@@ -100,20 +115,27 @@ func main() {
 				}
 				// The err was not the expected EOF, so we should log it and exit.
 				log.Printf("Error when reading file: %v", err)
-				shutdown()
+				shutdown(1)
 				return
 			}
-			// 6. Save the log line
-			saveErrorLine(line)
+			// Save the log line
+			saveErrorLine(line, savedErrorsFile)
 		}
 	}
 }
 
 /*
  * Print the final count of 'ERROR' logs found before exiting.
+ * TODO: This can probably be done nicer.
  */
-func shutdown() {
-	fmt.Println("\n🛑 Gracefully shutting down...")
+func shutdown(code int) {
+	switch code {
+	case 0:
+		fmt.Println("\n✅ LogMonitor is shutting down gracefully.")
+	default:
+		fmt.Println("\n🛑 LogMonitor is shutting down due to ReadString error.")
+	}
+	
 	fmt.Printf("Number of 'ERROR' logs already present:  %d\n", nrOfExistingErrors)
 	fmt.Printf("Number of new 'ERROR' logs found:        %d\n", nrOfErrorsTotal-nrOfExistingErrors)
 	fmt.Printf("Total number of 'ERROR' logs:            %d\n", nrOfErrorsTotal)
@@ -135,9 +157,7 @@ This is a standard Unix octal notation for file permissions used when a new file
 
 On Windows, Go maps these as closely as possible to Windows attributes (e.g., setting or clearing the "Read-only" attribute), but `0644` is the "standard" convention for text files that anyone can read but only the owner can change.
 */
-func saveErrorLine(line string) {
-	today := time.Now().Format("2006-01-02")
-	savedErrorsFilename := fmt.Sprintf("SavedErrors_%s.txt", today)
+func saveErrorLine(line string, file *os.File) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return // skip empty lines
@@ -148,14 +168,7 @@ func saveErrorLine(line string) {
 			return // Check if we've already seen this error line to avoid duplicates in the saved file
 		}
 
-		f, err := os.OpenFile(savedErrorsFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Printf("Error opening file %s: %v", savedErrorsFilename, err)
-			return
-		}
-		defer f.Close()
-
-		if _, err := f.WriteString(fmt.Sprintf("%s\n", line)); err != nil {
+		if _, err := file.WriteString(fmt.Sprintf("%s\n", line)); err != nil {
 			log.Printf("Error writing to file %s: %v", savedErrorsFilename, err)
 		} else {
 			// Update the map after successful write
@@ -169,7 +182,7 @@ func saveErrorLine(line string) {
 /*
  * Read the saved errors file on startup to pre-populate the memory map.
  */
-func loadExistingErrors(savedErrorsFilename string) {
+func loadExistingErrors() {
 	file, err := os.Open(savedErrorsFilename)
 	if err != nil {
 		return // File doesn't exist yet.
