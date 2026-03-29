@@ -1,10 +1,13 @@
 /*
+ * LogServer.go
+ *
  * A simple log server that listens for incoming TCP connections on port 8080.
- * Clients can send log entries in protobuf format, which the server will unmarshal and print to the console.
+ * Clients can send log entries in protobuf format, which the server will unmarshal and print to the console and a logFile.
  * Features to add:
  *    - Input arguments for port, pollingRate and log file path.
  *    - Write logs to a file instead of just printing, something that LogManager can read from.
  *    - Add log rotation based on time.
+ *	  - Display logs in a web interface
  *
  *
  * References:
@@ -37,8 +40,12 @@ var (
 	// seenClients maps client address (IP:Port) to true.
 	//   Not sure if we need this for anything, so just bool for now. We could store additional info about the client if needed.
 	seenClients = make(map[string]bool)
-	// Use a sync.Mutex because multiple goroutines (handleConnection) will write to this map.
+	// receivedMessagesFile is the file handle for the log file we write incoming protobuf messages to.
+	receivedMessagesFile *os.File
+
+	// Use a sync.Mutex because multiple goroutines (handleConnection) will write to the map and message file.
 	seenClientsMutex sync.Mutex
+	msgFileMutex     sync.Mutex
 )
 
 const (
@@ -51,6 +58,18 @@ func main() {
 
 	//TODO Take as parameter?
 	var pollingRate = 2000
+
+	today := time.Now().Format("2006-01-02")
+	logFilename := fmt.Sprintf("DevLog_%s.txt", today)
+
+	// Open the message file during startup, and keep it open, but protect the file handle with a mutex in handleConnection().
+	//TODO Is this the best way to do this? We could also open and close the file for each message.
+	receivedMessagesFile, err := os.OpenFile(logFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("Error opening file %s: %v", logFilename, err)
+		return
+	}
+	defer receivedMessagesFile.Close()
 
 	// Create a context that is cancelled when we receive an interrupt signal
 	// We want to be able to print stuff when we are done, rather than just aborting the application immediately.
@@ -82,7 +101,7 @@ func main() {
 				// Check if the error is a timeout (Expected when no one connects).
 				var netErr net.Error
 				if errors.As(err, &netErr) && netErr.Timeout() {
-					fmt.Printf("⏱️  No connection received in the last %d ms, checking for shutdown signal...\n", pollingRate)
+					fmt.Printf("⏱️  No connection received in the last %d ms, trying again...\n", pollingRate)
 					continue
 				}
 				shutdown(2)
@@ -100,16 +119,6 @@ func main() {
 func handleConnection(clientConnection net.Conn) {
 	// RAII-style cleanup for the connection.
 	defer clientConnection.Close()
-
-	today := time.Now().Format("2006-01-02")
-	logFilename := fmt.Sprintf("DevLog_%s.txt", today)
-
-	receivedMessagesFile, err := os.OpenFile(logFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Printf("Error opening file %s: %v", logFilename, err)
-		return
-	}
-	defer receivedMessagesFile.Close()
 
 	// Get the client's address (string format: "IP:Port").
 	clientAddress := clientConnection.RemoteAddr().String()
@@ -148,9 +157,12 @@ func handleConnection(clientConnection net.Conn) {
 			logEntry.Timestamp,
 			logEntry.Message)
 
+		// Protect the file from concurrent writes.
+		msgFileMutex.Lock()
 		if _, err := receivedMessagesFile.WriteString(message); err != nil {
-			log.Printf("Error writing to file %s: %v", logFilename, err)
+			log.Printf("Error writing to file: %v", err)
 		}
+		msgFileMutex.Unlock()
 	}
 }
 
@@ -158,7 +170,7 @@ func handleConnection(clientConnection net.Conn) {
 func shutdown(code int) {
 	switch code {
 	case 0:
-		fmt.Println("✅ LogMonitor is shutting down gracefully.")
+		fmt.Println("✅ LogServer is shutting down gracefully.")
 	case 1:
 		//fmt.Println("1️⃣ Shutdown due to an error with net.Listen.")
 	case 2:
