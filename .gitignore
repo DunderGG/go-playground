@@ -33,3 +33,5 @@ go.work.sum
 
 *.txt
 go.mod
+/LogServer/pb
+LogServer/go.sum
