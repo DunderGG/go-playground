@@ -13,7 +13,7 @@
  *   - Optionally, a simple web interface to display the errors in real-time
  *
  * Note: This is a very basic implementation and needs adjustments based on the specific log format and requirements.
-*/
+ */
 package main
 
 import (
@@ -48,6 +48,7 @@ var (
  * Each log line is expected to contain a timestamp, log level, and message.
  */
 func main() {
+	fmt.Println("🤖 Log Monitor is running...")
 	// Generate filename based on today's date (DevLog_YYYY-MM-DD.txt)
 	today := time.Now().Format("2006-01-02")
 	logFilename := fmt.Sprintf("DevLog_%s.txt", today)
@@ -135,7 +136,7 @@ func shutdown(code int) {
 	default:
 		fmt.Println("\n🛑 LogMonitor is shutting down due to ReadString error.")
 	}
-	
+
 	fmt.Printf("Number of 'ERROR' logs already present:  %d\n", nrOfExistingErrors)
 	fmt.Printf("Number of new 'ERROR' logs found:        %d\n", nrOfErrorsTotal-nrOfExistingErrors)
 	fmt.Printf("Total number of 'ERROR' logs:            %d\n", nrOfErrorsTotal)
