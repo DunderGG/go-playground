@@ -36,10 +36,18 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+type clientInfo struct {
+	//TODO We could store additional info about the client here, e.g. connection time, number of messages received, etc.
+	previouslySeen bool
+	// Not very useful since the logs themselves contain timestamps...
+	connectedAt      time.Time
+	numberOfMessages int
+}
+
 var (
 	// seenClients maps client address (IP:Port) to true.
-	//   Not sure if we need this for anything, so just bool for now. We could store additional info about the client if needed.
-	seenClients = make(map[string]bool)
+	//   Not sure if we need this for anything, so just store some info about the client.
+	seenClients = make(map[string]clientInfo)
 	// receivedMessagesFile is the file handle for the log file we write incoming protobuf messages to.
 	receivedMessagesFile *os.File
 
@@ -127,7 +135,16 @@ func handleConnection(clientConnection net.Conn) {
 	// Thread-safe update of the seenClients map.
 	// If already locked, this will block until the mutex is available, ensuring only one goroutine updates the map at a time.
 	seenClientsMutex.Lock()
-	seenClients[clientAddress] = true
+	// Check if we've seen this client before, and update the info accordingly.
+	client := seenClients[clientAddress]
+	if client.previouslySeen {
+		client.numberOfMessages += 1
+	} else {
+		client.previouslySeen = true
+		client.numberOfMessages = 1
+	}
+	client.connectedAt = time.Now()
+	seenClients[clientAddress] = client
 	seenClientsMutex.Unlock()
 
 	// Create a byte slice (dynamic array) as a buffer.
@@ -185,8 +202,8 @@ func shutdown(code int) {
 		fmt.Println("No clients connected during this session.")
 	} else {
 		fmt.Printf("Total unique clients seen: %d\n", len(seenClients))
-		for address := range seenClients {
-			fmt.Printf(" - %s\n", address)
+		for address, info := range seenClients {
+			fmt.Printf(" - %s (connected at %s, messages received: %d)\n", address, info.connectedAt.Format(time.RFC3339), info.numberOfMessages)
 		}
 	}
 	seenClientsMutex.Unlock()
