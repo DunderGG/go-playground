@@ -20,14 +20,20 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+
+	"playground/LogClient/pb"
+
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -40,6 +46,13 @@ var (
 	seenErrors = make(map[string]bool)
 	// Filename for the saved errors, generated based on today's date.
 	savedErrorsFilename string
+	// connection to the LogServer
+	serverConn net.Conn
+)
+
+const (
+	// DefaultPort is the standard port for gRPC and related Protobuf services.
+	DefaultPort = ":50051"
 )
 
 /*
@@ -49,9 +62,22 @@ var (
 func main() {
 	fmt.Println("🤖 Log Monitor is running...")
 
+	// Target address for the LogServer
+	serverAddress := "localhost" + DefaultPort
+
+	// Connect to LogServer
+	var err error
+	serverConn, err = net.Dial("tcp", serverAddress)
+	if err != nil {
+		log.Printf("⚠️ Could not connect to LogServer at %s: %v. Continuing in offline mode.", serverAddress, err)
+	} else {
+		fmt.Printf("✅ Connected to LogServer at %s\n", serverAddress)
+		defer serverConn.Close()
+	}
+
 	// How often we check for new log entries when we reach the end of the file, in milliseconds.
 	//TODO This should be an optional input parameter.
-	pollingRate := 500
+	pollingRate := 2000
 
 	// Generate filename based on today's date (DevLog_YYYY-MM-DD.txt)
 	//TODO This should be an optional input parameter.
@@ -61,7 +87,7 @@ func main() {
 
 	// Save the file handle for the saved errors file, so we can keep it open and avoid reopening it for every write.
 	var savedErrorsFile *os.File
-	savedErrorsFile, err := os.OpenFile(savedErrorsFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	savedErrorsFile, err = os.OpenFile(savedErrorsFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("Error opening file %s: %v", savedErrorsFilename, err)
 		return
@@ -130,10 +156,12 @@ func main() {
 	}
 }
 
-/*
- * Print the final count of 'ERROR' logs found before exiting.
- * TODO: This can probably be done nicer.
- */
+// shutdown prints the final count of 'ERROR' logs found before exiting using the
+// provided exit status code.
+//
+// Logic:
+//  1. Swaps between exit codes to print a relevant status message.
+//  2. Displays statistics for existing, new, and total error counts.
 func shutdown(code int) {
 	switch code {
 	case 0:
@@ -148,8 +176,6 @@ func shutdown(code int) {
 }
 
 /*
-Save lines containing "ERROR" to a separate file (SavedErrors_YYYY-MM-DD.txt) for later review.
-
 os.O_APPEND: New data will be written to the end of the file instead of overwriting existing content.
 os.O_CREATE: If the file doesn't exist, Go will create it. Without this, the function would return an error if the file was missing.
 os.O_WRONLY: Opens the file for Writing Only. (Other options are `O_RDONLY` or `O_RDWR`).
@@ -163,6 +189,14 @@ This is a standard Unix octal notation for file permissions used when a new file
 
 On Windows, Go maps these as closely as possible to Windows attributes (e.g., setting or clearing the "Read-only" attribute), but `0644` is the "standard" convention for text files that anyone can read but only the owner can change.
 */
+// saveErrorLine checks the provided line for "ERROR" content and appends it to the
+// specified file if it is a new unique entry.
+//
+// Logic:
+//  1. Trims whitespace and skips empty lines.
+//  2. If the line contains "ERROR", it checks the 'seenErrors' map for duplicates.
+//  3. Writes new unique errors to the file and updates the global error counters.
+//  4. Attempts to send the error to the LogServer if a connection is active.
 func saveErrorLine(line string, file *os.File) {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -181,13 +215,67 @@ func saveErrorLine(line string, file *os.File) {
 			seenErrors[line] = true
 			fmt.Printf("🚨 NEW ERROR SEEN:   %s\n", line)
 			nrOfErrorsTotal++
+
+			// Send to LogServer if connected
+			if serverConn != nil {
+				sendToLogServer(line)
+			}
 		}
 	}
 }
 
-/*
- * Read the saved errors file on startup to pre-populate the memory map.
- */
+// sendToLogServer marshals the provided message string into a Protobuf entry and
+// transmits it to the LogServer.
+//
+// Logic:
+//  1. Creates a pb.LogEntry with an "ERROR" level and current timestamp.
+//  2. Marshals the entry and calculates the payload size.
+//  3. Sends a 4-byte length prefix (Big-Endian) followed by the binary data.
+//  4. On network failure, cleans up the connection and sets serverConn to nil.
+func sendToLogServer(message string) {
+	logEntry := &pb.LogEntry{
+		Level:     "ERROR",
+		Timestamp: time.Now().Unix(),
+		Message:   message,
+	}
+
+	data, err := proto.Marshal(logEntry)
+	if err != nil {
+		log.Printf("Error marshaling log entry: %v", err)
+		return
+	}
+
+	// Send the size of the message first (standard way to delimited protobuf messages in TCP)
+	// We'll use 4 bytes (uint32) for the length.
+	size := uint32(len(data))
+	sizeBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(sizeBuf, size)
+
+	// Send length followed by data
+	_, err = serverConn.Write(sizeBuf)
+	if err != nil {
+		log.Printf("Error sending size to server: %v", err)
+		serverConn.Close()
+		serverConn = nil
+		return
+	}
+
+	_, err = serverConn.Write(data)
+	if err != nil {
+		log.Printf("Error sending log entry to server: %v", err)
+		// Set to nil so we don't keep trying and failing
+		serverConn.Close()
+		serverConn = nil
+	}
+}
+
+// loadExistingErrors reads the persistent error file on startup to pre-populate
+// the in-memory 'seenErrors' map.
+//
+// Logic:
+//  1. Gracefully handles scenarios where the saved error file does not yet exist.
+//  2. Reads the file line by line, updating the deduplication map and error counts.
+//  3. Synchronizes the total error count with any existing historic logs.
 func loadExistingErrors() {
 	file, err := os.Open(savedErrorsFilename)
 	if err != nil {
