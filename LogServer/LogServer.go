@@ -1,20 +1,15 @@
-/*
- * LogServer.go
- *
- * A simple log server that listens for incoming TCP connections on port 8080.
- * Clients can send log entries in protobuf format, which the server will unmarshal and print to the console and a logFile.
- * Features to add:
- *    - Input arguments for port, pollingRate and log file path.
- *    - Write logs to a file instead of just printing, something that LogManager can read from.
- *    - Add log rotation based on time.
- *	  - Display logs in a web interface
- *
- *
- * References:
- * - Go net package: 			https://golang.org/pkg/net/
- * - Protobuf documentation: 	https://developers.google.com/protocol-buffers
- */
-
+// LogServer listens for incoming TCP connections from LogClients and 
+// broadcasts telemetry data to a web-based dashboard via WebSockets.
+//
+// It unmarshals binary Protobuf data, persists it to disk, and uses 
+// Goroutines to handle multiple concurrent clients and web connections.
+//
+// Features to add:
+//  - Input arguments for port, pollingRate and log file path.
+//  - Add log rotation based on time.
+//  - Advanced log filtering and search in the web interface.
+//
+// Note: Uses github.com/gorilla/websocket for real-time dashboard updates.
 package main
 
 import (
