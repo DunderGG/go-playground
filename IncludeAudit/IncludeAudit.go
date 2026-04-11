@@ -21,36 +21,121 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 )
 
+// FileAudit stores analysis for a single file
+type FileAudit struct {
+	Path     string
+	Includes []string
+	Symbols  []string
+}
+
 func main() {
-	fmt.Println("🔍 IncludeAudit is scanning the graph...")
+	// We determine which folder to scan (defaulting to ".") and start the analysis.
+	targetDir := "." // Default to current directory
+	if len(os.Args) > 1 {
+		// os.Args[1] is the first command-line argument passed to the program.
+		targetDir = os.Args[1]
+	}
 
-	/*
-		   DETAILED IMPLEMENTATION PLAN
-		   ----------------------------
+	fmt.Printf("🔍 Scanning: %s\n", targetDir)
 
-		   1. HEURISTIC PARSING (FAST)
-		      - Scan files for `#include "..."`.
-		      - Map every project header to the symbols it defines (Classes, Structs, Enums).
+	// Regex for C++ includes: Look for #include followed by "name.h" or <name.h>
+	// ^#include  : Starts with #include
+	// \s+       : One or more spaces
+	// ["<]      : Opening quote or bracket
+	// ([^">]+)  : Capture group: any character except " or >
+	includeRegex := regexp.MustCompile(`^#include\s+["<]([^">]+)[">]`)
 
-		   2. SYMBOL USAGE TRACKER
-		      - For file X, list all Symbols it uses.
-		      - Check if Symbol S is defined in any of the headers included by file X.
-		      - If Symbol S is only used as `class S*` or `struct S*`, it's a Forward Declare candidate.
+	// Regex for Unreal Symbols: Look for 'class', 'struct', or 'enum' followed by a name
+	// starting with an uppercase letter (Unreal convention: A, U, F, etc.)
+	symbolRegex := regexp.MustCompile(`\b(class|struct|enum)\s+([A-Z][a-zA-Z0-9_]+)`)
 
-		   3. REPORTING
-		      - List "Unused Includes" per file.
-		      - List "Forward Declaration Candidates".
-		      - Rank files by "Include Weight" (impact on compile time).
+	// Walk through the directory tree recursively.
+	// filepath.Walk takes a root path and a callback function to run for every file/folder.
+	err := filepath.Walk(targetDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
 
-			4. "IN-SITU" VERIFICATION
-		      - Optional: Temporarily comment out an include and run `UnrealEditor-Cmd.exe`
-		        to see if it still compiles (The "Brute Force" verification).
+		// Check file extensions (case-insensitive)
+		ext := strings.ToLower(filepath.Ext(path))
 
-		   5. DEPTH ANALYZER
-		      - Calculate the "Recursive Weight" of an include (how many other headers it pulls in).
-		      - Flag headers that pull in `Engine.h` as "Critical Performance Risks".
-	*/
+		// Logic: Only audit C++ files, but skip Unreal's auto-generated headers
+		if (ext == ".h" || ext == ".cpp") && !strings.Contains(path, ".generated.h") {
+			// 1. Process the file to get its audit data
+			audit := scanFile(path, includeRegex, symbolRegex)
+			// 2. Output the findings to the terminal
+			printAudit(audit)
+		}
+		return nil
+	})
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error walking path: %v\n", err)
+	}
+}
+
+// scanFile opens a file and reads it line-by-line to find includes and symbols.
+// Input:
+//   - path: The absolute or relative path to the file.
+//   - iRegex: The compiled regex for detecting #include.
+//   - sRegex: The compiled regex for detecting Class/Struct symbols.
+//
+// Output:
+//   - A FileAudit struct containing the results of the scan.
+func scanFile(path string, iRegex, sRegex *regexp.Regexp) FileAudit {
+	file, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening file %s: %v\n", path, err)
+		return FileAudit{Path: path}
+	}
+	defer file.Close() // Ensures the file is closed when the function returns
+
+	audit := FileAudit{Path: path}
+	scanner := bufio.NewScanner(file)
+
+	// Process each line of the file (equivalent to std::getline in C++)
+	for scanner.Scan() {
+		// Trim whitespace from the line to simplify regex matching
+		line := strings.TrimSpace(scanner.Text())
+
+		// Extract Include: uses the regex capture group ([^">]+)
+		if matches := iRegex.FindStringSubmatch(line); len(matches) > 1 {
+			audit.Includes = append(audit.Includes, matches[1])
+		}
+
+		// Extract Symbol: uses the second capture group ([A-Z][a-zA-Z0-9_]+)
+		if matches := sRegex.FindStringSubmatch(line); len(matches) > 2 {
+			audit.Symbols = append(audit.Symbols, matches[2])
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", path, err)
+	}
+	return audit
+}
+
+// printAudit displays the results of a file scan in a formatted list.
+// Input:
+//   - audit: The FileAudit struct containing path, includes, and symbols.
+func printAudit(audit FileAudit) {
+	// Guess we found no includes or symbols...
+	if len(audit.Includes) == 0 && len(audit.Symbols) == 0 {
+		return
+	}
+
+	fmt.Printf("\n📄 File: %s\n", audit.Path)
+	if len(audit.Includes) > 0 {
+		fmt.Printf("   ├─ Includes (%d): %s\n", len(audit.Includes), strings.Join(audit.Includes, ", "))
+	}
+	if len(audit.Symbols) > 0 {
+		fmt.Printf("   └─ Symbols  (%d): %s\n", len(audit.Symbols), strings.Join(audit.Symbols, ", "))
+	}
 }
