@@ -40,11 +40,17 @@
         .unknown { background: #fff5e6; color: #9a6700; border: 1px solid #fde0b7; }
         [data-theme="dark"] .unknown { background: #3d3b2d; color: #fbbf24; border: 1px solid #5a5440; }
         
+        .forward { background: #e6f6ff; color: #0070e0; border: 1px solid #b7e4fd; }
+        [data-theme="dark"] .forward { background: #1e2d3d; color: #38bdf8; border: 1px solid #2d4a5a; }
+        
         .name { font-family: monospace; font-size: 0.9em; }
         .stats-container { display: flex; gap: 20px; margin-bottom: 30px; }
         .stat-card { background: var(--card-bg); flex: 1; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); text-align: center; border: 1px solid var(--legend-border); }
         .stat-value { font-size: 2em; font-weight: bold; color: var(--h2-color); margin-bottom: 5px; }
         .stat-label { font-size: 0.8em; color: var(--text-color); opacity: 0.7; text-transform: uppercase; letter-spacing: 1px; }
+
+        .suggestion { font-size: 0.85em; margin-left: auto; color: #0070e0; font-style: italic; }
+        [data-theme="dark"] .suggestion { color: #38bdf8; }
 
         .legend { background: var(--card-bg); padding: 15px; border-radius: 8px; margin-bottom: 30px; border: 1px solid var(--legend-border); display: flex; flex-direction: column; gap: 10px; }
         .legend-item { display: flex; align-items: center; font-size: 0.85em; color: var(--text-color); }
@@ -94,6 +100,7 @@
     <div class="legend">
         <div class="legend-item"><span class="status essential">ESSENTIAL</span><span>Symbol usage was found in the source file for this header. Keep it.</span></div>
         <div class="legend-item"><span class="status redundant">REDUNDANT</span><span>No symbols from this header were detected in the source file. Safe to remove?</span></div>
+        <div class="legend-item"><span class="status forward">FORWARD</span><span>Symbols are used as pointers/references only. Replace with a Forward Declaration.</span></div>
         <div class="legend-item"><span class="status unknown">UNKNOWN</span><span>Header was not found in the initial scan (Third-party, Standard Library, or Module header).</span></div>
     </div>
 

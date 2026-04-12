@@ -29,18 +29,41 @@ import (
 	"strings"
 )
 
+var (
+	// IncludeRegex matches C++ includes: Look for #include followed by "name.h" or <name.h>
+	// ^#include  : Starts with #include
+	// \s+       : One or more spaces
+	// ["<]      : Opening quote or bracket
+	// ([^">]+)  : Capture group: any character except " or >
+	IncludeRegex = regexp.MustCompile(`^#include\s+["<]([^">]+)[">]`)
+
+	// SymbolRegex matches Unreal Symbols: Look for 'class', 'struct', 'enum', or 'namespace'
+	// followed by an optional API macro (e.g. UTILITYFEATURES_API) and the symbol name.
+	SymbolRegex = regexp.MustCompile(`\b(class|struct|enum|namespace)\s+(?:[A-Z0-9_]+_API\s+)?([a-zA-Z0-9_]+)`)
+)
+
+// GetFullUsageRegex returns a compiled regex for detecting "Full" usage of a specific symbol.
+// Full usage includes member access (->, .), construction (new, constructor call), or static calls (::).
+// It uses \b word boundaries to ensure we match exactly the symbol name.
+func GetFullUsageRegex(symbol string) *regexp.Regexp {
+	pattern := fmt.Sprintf(`\b%s\b\s*(\.|->|::|\(|[a-zA-Z0-9_]+\s*(\[|;|\s+|=|\())|new\s+\b%s\b`, symbol, symbol)
+	return regexp.MustCompile(pattern)
+}
+
 // FileSummary stores the final audit info for a file to be displayed in the HTML dashboard.
 type FileSummary struct {
 	Path           string
 	Includes       []IncludeStatus
 	TotalIncludes  int
 	RedundantCount int
+	ForwardCount   int
 }
 
 // IncludeStatus tracks the status of a specific include within a file.
 type IncludeStatus struct {
-	Name   string
-	Status string // "Essential", "Redundant", or "Unknown"
+	Name             string
+	Status           string // "Essential", "Redundant", "Unknown", or "Forward"
+	SuggestedForward string // e.g., "class AMyCharacter;"
 }
 
 // FileAudit stores analysis for a single file
@@ -59,21 +82,10 @@ func main() {
 
 	fmt.Printf("🔍 Scanning: %s\n", targetDir)
 
-	// Regex for C++ includes: Look for #include followed by "name.h" or <name.h>
-	// ^#include  : Starts with #include
-	// \s+       : One or more spaces
-	// ["<]      : Opening quote or bracket
-	// ([^">]+)  : Capture group: any character except " or >
-	includeRegex := regexp.MustCompile(`^#include\s+["<]([^">]+)[">]`)
-
-	// Regex for Unreal Symbols: Look for 'class', 'struct', or 'enum' followed by a name
-	// starting with an uppercase letter (Unreal convention: A, U, F, etc.)
-	symbolRegex := regexp.MustCompile(`\b(class|struct|enum)\s+([A-Z][a-zA-Z0-9_]+)`)
-
 	// Step 1: Build the Global Symbol Registry (where symbols are defined)
 	// Key: Symbol Name (e.g. "APlayerCharacter")
 	// Value: Slice of strings representing header files that define it
-	symbolRegistry, err := buildSymbolRegistry(targetDir, includeRegex, symbolRegex)
+	symbolRegistry, err := buildSymbolRegistry(targetDir, IncludeRegex, SymbolRegex)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error building registry: %v\n", err)
 		return
@@ -87,7 +99,7 @@ func main() {
 
 	// Step 2: Second Pass - Identify redundant includes in .cpp files
 	fmt.Println("\n🔍 Analyzing .cpp files for redundant includes...")
-	summaries, err := analyzeCppFiles(targetDir, includeRegex, symbolRegistry)
+	summaries, err := analyzeCppFiles(targetDir, IncludeRegex, symbolRegistry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error analyzing files: %v\n", err)
 	}
@@ -98,62 +110,6 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating dashboard: %v\n", err)
 	}
-}
-
-// generateDashboard creates a simple HTML file to visualize the results.
-func generateDashboard(summaries []FileSummary) error {
-	// Calculate Global Stats
-	totalFiles := len(summaries)
-	totalRedundant := 0
-	totalIncludes := 0
-	for _, s := range summaries {
-		totalRedundant += s.RedundantCount
-		totalIncludes += s.TotalIncludes
-	}
-
-	redundancyRatio := 0.0
-	if totalIncludes > 0 {
-		redundancyRatio = (float64(totalRedundant) / float64(totalIncludes)) * 100
-	}
-
-	// Read the template file
-	templateContent, err := os.ReadFile("template.html")
-	if err != nil {
-		return fmt.Errorf("could not read template.html: %v", err)
-	}
-
-	var resultsHtml strings.Builder
-	for _, s := range summaries {
-		// Calculate file-specific health
-		fileHealth := 100.0
-		if s.TotalIncludes > 0 {
-			fileHealth = 100.0 - (float64(s.RedundantCount) / float64(s.TotalIncludes) * 100.0)
-		}
-		healthClass := "health-good"
-		if fileHealth < 50 {
-			healthClass = "health-bad"
-		} else if fileHealth < 80 {
-			healthClass = "health-warn"
-		}
-
-		resultsHtml.WriteString(fmt.Sprintf("<div class='file'><h2>📄 %s <span class='file-health %s'>%.0f%% Health</span></h2><div class='include-list'>", s.Path, healthClass, fileHealth))
-		for _, inc := range s.Includes {
-			class := strings.ToLower(inc.Status)
-			resultsHtml.WriteString(fmt.Sprintf("<div class='include'><span class='status %s'>%s</span><span class='name'>#include \"%s\"</span></div>", class, inc.Status, inc.Name))
-		}
-		resultsHtml.WriteString("</div></div>")
-	}
-
-	// Replace the placeholders with our generated HTML and stats
-	finalHtml := string(templateContent)
-	finalHtml = strings.Replace(finalHtml, "<!-- RESULTS_PLACEHOLDER -->", resultsHtml.String(), 1)
-	finalHtml = strings.Replace(finalHtml, "{{TOTAL_FILES}}", fmt.Sprintf("%d", totalFiles), 1)
-	finalHtml = strings.Replace(finalHtml, "{{TOTAL_REDUNDANT}}", fmt.Sprintf("%d", totalRedundant), 1)
-	finalHtml = strings.Replace(finalHtml, "{{RATIO}}", fmt.Sprintf("%.1f%%", redundancyRatio), 1)
-
-	// Write the final dashboard.html
-	err = os.WriteFile("dashboard.html", []byte(finalHtml), 0644)
-	return err
 }
 
 // buildSymbolRegistry performs the "First Pass" by scanning all headers (.h)
@@ -280,7 +236,6 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 			// 2. For each include, check if any of its symbols are used
 			for _, include := range audit.Includes {
 				status := "Unknown"
-				foundSymbolInHeader := false
 				symbolsInThisHeader := []string{}
 
 				// Find all symbols that "belong" to this included header
@@ -294,18 +249,41 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 				}
 
 				// Check if any of these symbols appear in the CLEANED .cpp text
+				isPointerUsage := true
+				hasAnyUsage := false
+
 				for _, symbol := range symbolsInThisHeader {
+					// We use a case-sensitive substring check for the quick first pass.
+					// This is much faster than running a regex on every symbol in every file.
 					if strings.Contains(cleanText, symbol) {
-						foundSymbolInHeader = true
-						break
+						hasAnyUsage = true
+						// If we find the symbol, then we do a more expensive regex check to see if it's "Full" or just Pointer.
+						if GetFullUsageRegex(symbol).MatchString(cleanText) {
+							isPointerUsage = false
+							break
+						}
 					}
 				}
 
 				// 3. Report if the include seems redundant
+				suggestion := ""
 				if len(symbolsInThisHeader) > 0 {
-					if foundSymbolInHeader {
-						status = "Essential"
-						fmt.Printf("   ✅ Essential: #include \"%s\"\n", include)
+					if hasAnyUsage {
+						if isPointerUsage {
+							status = "Forward"
+							summary.ForwardCount++
+
+							// Suggest forward declaration based on prefix (Unreal Convention)
+							prefix := "class"
+							if len(symbolsInThisHeader[0]) > 0 && symbolsInThisHeader[0][0] == 'F' {
+								prefix = "struct"
+							}
+							suggestion = fmt.Sprintf("%s %s;", prefix, symbolsInThisHeader[0])
+							fmt.Printf("   💡 FORWARD:   #include \"%s\" (Only pointers/refs used. Suggest: %s)\n", include, suggestion)
+						} else {
+							status = "Essential"
+							fmt.Printf("   ✅ Essential: #include \"%s\"\n", include)
+						}
 					} else {
 						status = "Redundant"
 						summary.RedundantCount++
@@ -314,7 +292,11 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 				} else {
 					fmt.Printf("   ❔ Unknown:   #include \"%s\" (Internal/Third Party)\n", include)
 				}
-				summary.Includes = append(summary.Includes, IncludeStatus{Name: include, Status: status})
+				summary.Includes = append(summary.Includes, IncludeStatus{
+					Name:             include,
+					Status:           status,
+					SuggestedForward: suggestion,
+				})
 			}
 			summary.TotalIncludes = len(audit.Includes)
 			summaries = append(summaries, summary)
@@ -333,8 +315,8 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 //   - A string with all comments replaced by single spaces to preserve layout.
 func stripComments(text string) string {
 	// Regular expression to match single line // comments and multi-line /* */ comments
-	// (?s) is a flag that makes . match newline characters
-	commentRegex := regexp.MustCompile(`(?s)//.*?\n|/\*.*?\*/`)
+	// Use [^\n]* instead of .* to avoid matching across headers/newlines if not handled
+	commentRegex := regexp.MustCompile(`(?s)//[^\n]*|/\*.*?\*/`)
 	return commentRegex.ReplaceAllString(text, " ")
 }
 
@@ -377,4 +359,66 @@ func printAudit(audit FileAudit) {
 	if len(audit.Symbols) > 0 {
 		fmt.Printf("   └─ Symbols  (%d): %s\n", len(audit.Symbols), strings.Join(audit.Symbols, ", "))
 	}
+}
+
+// generateDashboard creates a simple HTML file to visualize the results.
+func generateDashboard(summaries []FileSummary) error {
+	// Calculate Global Stats
+	totalFiles := len(summaries)
+	totalRedundant := 0
+	totalForward := 0
+	totalIncludes := 0
+	for _, s := range summaries {
+		totalRedundant += s.RedundantCount
+		totalForward += s.ForwardCount
+		totalIncludes += s.TotalIncludes
+	}
+
+	debtRatio := 0.0
+	if totalIncludes > 0 {
+		debtRatio = (float64(totalRedundant+totalForward) / float64(totalIncludes)) * 100
+	}
+
+	// Read the template file
+	templateContent, err := os.ReadFile("template.html")
+	if err != nil {
+		return fmt.Errorf("could not read template.html: %v", err)
+	}
+
+	var resultsHtml strings.Builder
+	for _, s := range summaries {
+		// Calculate file-specific health
+		fileHealth := 100.0
+		if s.TotalIncludes > 0 {
+			fileHealth = 100.0 - (float64(s.RedundantCount+s.ForwardCount) / float64(s.TotalIncludes) * 100.0)
+		}
+		healthClass := "health-good"
+		if fileHealth < 50 {
+			healthClass = "health-bad"
+		} else if fileHealth < 80 {
+			healthClass = "health-warn"
+		}
+
+		resultsHtml.WriteString(fmt.Sprintf("<div class='file'><h2>📄 %s <span class='file-health %s'>%.0f%% Health</span></h2><div class='include-list'>", s.Path, healthClass, fileHealth))
+		for _, include := range s.Includes {
+			class := strings.ToLower(include.Status)
+			resultsHtml.WriteString(fmt.Sprintf("<div class='include'><span class='status %s'>%s</span><span class='name'>#include \"%s\"</span>", class, include.Status, include.Name))
+			if include.Status == "Forward" {
+				resultsHtml.WriteString(fmt.Sprintf("<span class='suggestion'>💡 Suggest: %s</span>", include.SuggestedForward))
+			}
+			resultsHtml.WriteString("</div>")
+		}
+		resultsHtml.WriteString("</div></div>")
+	}
+
+	// Replace the placeholders with our generated HTML and stats
+	finalHtml := string(templateContent)
+	finalHtml = strings.Replace(finalHtml, "<!-- RESULTS_PLACEHOLDER -->", resultsHtml.String(), 1)
+	finalHtml = strings.Replace(finalHtml, "{{TOTAL_FILES}}", fmt.Sprintf("%d", totalFiles), 1)
+	finalHtml = strings.Replace(finalHtml, "{{TOTAL_REDUNDANT}}", fmt.Sprintf("%d", totalRedundant+totalForward), 1)
+	finalHtml = strings.Replace(finalHtml, "{{RATIO}}", fmt.Sprintf("%.1f%%", debtRatio), 1)
+
+	// Write the final dashboard.html
+	err = os.WriteFile("dashboard.html", []byte(finalHtml), 0644)
+	return err
 }
