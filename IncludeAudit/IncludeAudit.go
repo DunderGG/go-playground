@@ -29,6 +29,20 @@ import (
 	"strings"
 )
 
+// FileSummary stores the final audit info for a file to be displayed in the HTML dashboard.
+type FileSummary struct {
+	Path           string
+	Includes       []IncludeStatus
+	TotalIncludes  int
+	RedundantCount int
+}
+
+// IncludeStatus tracks the status of a specific include within a file.
+type IncludeStatus struct {
+	Name   string
+	Status string // "Essential", "Redundant", or "Unknown"
+}
+
 // FileAudit stores analysis for a single file
 type FileAudit struct {
 	Path     string
@@ -40,7 +54,6 @@ func main() {
 	// We determine which folder to scan (defaulting to ".") and start the analysis.
 	targetDir := "." // Default to current directory
 	if len(os.Args) > 1 {
-		// os.Args[1] is the first command-line argument passed to the program.
 		targetDir = os.Args[1]
 	}
 
@@ -57,40 +70,150 @@ func main() {
 	// starting with an uppercase letter (Unreal convention: A, U, F, etc.)
 	symbolRegex := regexp.MustCompile(`\b(class|struct|enum)\s+([A-Z][a-zA-Z0-9_]+)`)
 
-	// Walk through the directory tree recursively.
-	// filepath.Walk takes a root path and a callback function to run for every file/folder.
-	err := filepath.Walk(targetDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	// Step 1: Build the Global Symbol Registry (where symbols are defined)
+	// Key: Symbol Name (e.g. "APlayerCharacter")
+	// Value: Slice of strings representing header files that define it
+	symbolRegistry, err := buildSymbolRegistry(targetDir, includeRegex, symbolRegex)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error building registry: %v\n", err)
+		return
+	}
+
+	// Print the collected Registry so we can see what we've mapped
+	fmt.Printf("\n📚 Global Symbol Registry (%d entries):\n", len(symbolRegistry))
+	for sym, headers := range symbolRegistry {
+		fmt.Printf("   %-20s -> %s\n", sym, strings.Join(headers, ", "))
+	}
+
+	// Step 2: Second Pass - Identify redundant includes in .cpp files
+	fmt.Println("\n🔍 Analyzing .cpp files for redundant includes...")
+	summaries, err := analyzeCppFiles(targetDir, includeRegex, symbolRegistry)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error analyzing files: %v\n", err)
+	}
+
+	// Step 3: Generate the Dashboard
+	fmt.Println("\n📊 Generating dashboard.html...")
+	err = generateDashboard(summaries)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error generating dashboard: %v\n", err)
+	}
+}
+
+// generateDashboard creates a simple HTML file to visualize the results.
+func generateDashboard(summaries []FileSummary) error {
+	// Calculate Global Stats
+	totalFiles := len(summaries)
+	totalRedundant := 0
+	totalIncludes := 0
+	for _, s := range summaries {
+		totalRedundant += s.RedundantCount
+		totalIncludes += s.TotalIncludes
+	}
+
+	redundancyRatio := 0.0
+	if totalIncludes > 0 {
+		redundancyRatio = (float64(totalRedundant) / float64(totalIncludes)) * 100
+	}
+
+	// Read the template file
+	templateContent, err := os.ReadFile("template.html")
+	if err != nil {
+		return fmt.Errorf("could not read template.html: %v", err)
+	}
+
+	var resultsHtml strings.Builder
+	for _, s := range summaries {
+		// Calculate file-specific health
+		fileHealth := 100.0
+		if s.TotalIncludes > 0 {
+			fileHealth = 100.0 - (float64(s.RedundantCount) / float64(s.TotalIncludes) * 100.0)
+		}
+		healthClass := "health-good"
+		if fileHealth < 50 {
+			healthClass = "health-bad"
+		} else if fileHealth < 80 {
+			healthClass = "health-warn"
+		}
+
+		resultsHtml.WriteString(fmt.Sprintf("<div class='file'><h2>📄 %s <span class='file-health %s'>%.0f%% Health</span></h2><div class='include-list'>", s.Path, healthClass, fileHealth))
+		for _, inc := range s.Includes {
+			class := strings.ToLower(inc.Status)
+			resultsHtml.WriteString(fmt.Sprintf("<div class='include'><span class='status %s'>%s</span><span class='name'>#include \"%s\"</span></div>", class, inc.Status, inc.Name))
+		}
+		resultsHtml.WriteString("</div></div>")
+	}
+
+	// Replace the placeholders with our generated HTML and stats
+	finalHtml := string(templateContent)
+	finalHtml = strings.Replace(finalHtml, "<!-- RESULTS_PLACEHOLDER -->", resultsHtml.String(), 1)
+	finalHtml = strings.Replace(finalHtml, "{{TOTAL_FILES}}", fmt.Sprintf("%d", totalFiles), 1)
+	finalHtml = strings.Replace(finalHtml, "{{TOTAL_REDUNDANT}}", fmt.Sprintf("%d", totalRedundant), 1)
+	finalHtml = strings.Replace(finalHtml, "{{RATIO}}", fmt.Sprintf("%.1f%%", redundancyRatio), 1)
+
+	// Write the final dashboard.html
+	err = os.WriteFile("dashboard.html", []byte(finalHtml), 0644)
+	return err
+}
+
+// buildSymbolRegistry performs the "First Pass" by scanning all headers (.h)
+// and mapping every symbol found to the filename it belongs to.
+//
+// Input:
+//   - dir: The root folder to scan for .h files.
+//   - includeRegex: The compiled regex for detecting #include.
+//   - symbolRegex: The compiled regex for detecting Class/Struct symbols.
+//
+// Output:
+//   - A map where the key is the Symbol and the value is a slice of Header filenames.
+//   - error: Returns any directory traversal errors.
+func buildSymbolRegistry(dir string, includeRegex, symbolRegex *regexp.Regexp) (map[string][]string, error) {
+	symbolRegistry := make(map[string][]string)
+
+	err := filepath.WalkDir(dir, func(path string, dirEntry os.DirEntry, err error) error {
+		if err != nil || dirEntry.IsDir() {
 			return nil
 		}
 
-		// Check file extensions (case-insensitive)
 		ext := strings.ToLower(filepath.Ext(path))
 
-		// Logic: Only audit C++ files, but skip Unreal's auto-generated headers
-		if (ext == ".h" || ext == ".cpp") && !strings.Contains(path, ".generated.h") {
-			// 1. Process the file to get its audit data
+		// Only look at Headers (.h) to find where symbols are DEFINED
+		// Skip .generated.h files since they are auto-generated by Unreal Header Tool.
+		if ext == ".h" && !strings.Contains(path, ".generated.h") {
 			audit := scanFile(path, includeRegex, symbolRegex)
-			// 2. Output the findings to the terminal
-			printAudit(audit)
+
+			// Register each symbol found in this header
+			for _, symbol := range audit.Symbols {
+				// Store the symbol and the filename where it lives
+				// We check if it is already in the list to avoid exact duplicates
+				found := false
+				newHeader := filepath.Base(path)
+				for _, existingHeader := range symbolRegistry[symbol] {
+					if existingHeader == newHeader {
+						found = true
+						break
+					}
+				}
+				if !found {
+					symbolRegistry[symbol] = append(symbolRegistry[symbol], newHeader)
+				}
+			}
 		}
 		return nil
 	})
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error walking path: %v\n", err)
-	}
+	return symbolRegistry, err
 }
 
 // scanFile opens a file and reads it line-by-line to find includes and symbols.
 // Input:
 //   - path: The absolute or relative path to the file.
-//   - iRegex: The compiled regex for detecting #include.
-//   - sRegex: The compiled regex for detecting Class/Struct symbols.
+//   - includeRegex: The compiled regex for detecting #include.
+//   - symbolRegex: The compiled regex for detecting Class/Struct symbols.
 //
 // Output:
 //   - A FileAudit struct containing the results of the scan.
-func scanFile(path string, iRegex, sRegex *regexp.Regexp) FileAudit {
+func scanFile(path string, includeRegex, symbolRegex *regexp.Regexp) FileAudit {
 	file, err := os.Open(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening file %s: %v\n", path, err)
@@ -107,17 +230,133 @@ func scanFile(path string, iRegex, sRegex *regexp.Regexp) FileAudit {
 		line := strings.TrimSpace(scanner.Text())
 
 		// Extract Include: uses the regex capture group ([^">]+)
-		if matches := iRegex.FindStringSubmatch(line); len(matches) > 1 {
+		if matches := includeRegex.FindStringSubmatch(line); len(matches) > 1 {
 			audit.Includes = append(audit.Includes, matches[1])
 		}
 
 		// Extract Symbol: uses the second capture group ([A-Z][a-zA-Z0-9_]+)
-		if matches := sRegex.FindStringSubmatch(line); len(matches) > 2 {
+		if matches := symbolRegex.FindStringSubmatch(line); len(matches) > 2 {
 			audit.Symbols = append(audit.Symbols, matches[2])
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", path, err)
+	}
+	return audit
+}
+
+// analyzeCppFiles performs the "Second Pass" by scanning .cpp files to see
+// which of their included headers are actually needed based on symbol usage.
+//
+// Input:
+//   - dir: The root folder to scan for .cpp files.
+//   - includeRegex: The compiled regex for detecting #include.
+//   - symbolRegistry: Our global map[Symbol][]Headers from the first pass.
+//
+// Output:
+//   - []FileSummary: A list of audit results for each file.
+//   - error: Returns any directory traversal errors.
+func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map[string][]string) ([]FileSummary, error) {
+	var summaries []FileSummary
+
+	err := filepath.WalkDir(dir, func(path string, dirEntry os.DirEntry, err error) error {
+		if err != nil || dirEntry.IsDir() {
+			return nil
+		}
+
+		if strings.ToLower(filepath.Ext(path)) == ".cpp" {
+			// 1. Get all includes and the full content of the file
+			audit := extractIncludes(path, includeRegex)
+			content, _ := os.ReadFile(path)
+			fileText := string(content)
+
+			// Clean the file text by removing single-line and multi-line comments
+			// This prevents false positives where a symbol is mentioned in a comment
+			cleanText := stripComments(fileText)
+
+			fmt.Printf("\n📄 File: %s\n", path)
+			summary := FileSummary{Path: path}
+
+			// 2. For each include, check if any of its symbols are used
+			for _, include := range audit.Includes {
+				status := "Unknown"
+				foundSymbolInHeader := false
+				symbolsInThisHeader := []string{}
+
+				// Find all symbols that "belong" to this included header
+				for symbol, headers := range symbolRegistry {
+					for _, header := range headers {
+						if header == include || filepath.Base(header) == include {
+							symbolsInThisHeader = append(symbolsInThisHeader, symbol)
+							break
+						}
+					}
+				}
+
+				// Check if any of these symbols appear in the CLEANED .cpp text
+				for _, symbol := range symbolsInThisHeader {
+					if strings.Contains(cleanText, symbol) {
+						foundSymbolInHeader = true
+						break
+					}
+				}
+
+				// 3. Report if the include seems redundant
+				if len(symbolsInThisHeader) > 0 {
+					if foundSymbolInHeader {
+						status = "Essential"
+						fmt.Printf("   ✅ Essential: #include \"%s\"\n", include)
+					} else {
+						status = "Redundant"
+						summary.RedundantCount++
+						fmt.Printf("   ⚠️  REDUNDANT: #include \"%s\" (No symbols from this header used)\n", include)
+					}
+				} else {
+					fmt.Printf("   ❔ Unknown:   #include \"%s\" (Internal/Third Party)\n", include)
+				}
+				summary.Includes = append(summary.Includes, IncludeStatus{Name: include, Status: status})
+			}
+			summary.TotalIncludes = len(audit.Includes)
+			summaries = append(summaries, summary)
+		}
+		return nil
+	})
+
+	return summaries, err
+}
+
+// stripComments removes both // and /* */ comments from C++ source text.
+// Input:
+//   - text: The full content of a C++ source file.
+//
+// Output:
+//   - A string with all comments replaced by single spaces to preserve layout.
+func stripComments(text string) string {
+	// Regular expression to match single line // comments and multi-line /* */ comments
+	// (?s) is a flag that makes . match newline characters
+	commentRegex := regexp.MustCompile(`(?s)//.*?\n|/\*.*?\*/`)
+	return commentRegex.ReplaceAllString(text, " ")
+}
+
+// extractIncludes is a helper that only extracts includes from a file.
+// It is faster than scanFile because it skips symbol definition scanning.
+//
+// Input:
+//   - path: The relative or absolute path to the file.
+//   - includeRegex: The compiled regex for detecting #include.
+//
+// Output:
+//   - A FileAudit struct containing only the Includes list.
+func extractIncludes(path string, includeRegex *regexp.Regexp) FileAudit {
+	file, _ := os.Open(path)
+	defer file.Close()
+	audit := FileAudit{Path: path}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if matches := includeRegex.FindStringSubmatch(line); len(matches) > 1 {
+			audit.Includes = append(audit.Includes, matches[1])
+		}
 	}
 	return audit
 }
