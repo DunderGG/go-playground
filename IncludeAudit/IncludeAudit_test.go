@@ -59,11 +59,11 @@ func TestSymbolRegex(t *testing.T) {
 		line           string
 		expectedSymbol string
 	}{
-		{"Simple Class", "class APlayerCharacter", "APlayerCharacter"},
-		{"Class with API", "class UTILITY_API Logger", "Logger"}, // Tests Unreal API macro handling
-		{"Struct", "struct FPlayerData", "FPlayerData"},
-		{"Namespace", "namespace PlayerUtils", "PlayerUtils"},
-		{"Enum", "enum EGameState", "EGameState"},
+		{"Simple Class", "class APlayerCharacter {", "APlayerCharacter"},
+		{"Class with API", "class UTILITY_API Logger : public Base {", "Logger"}, // Tests Unreal API macro handling
+		{"Struct", "struct FPlayerData {", "FPlayerData"},
+		{"Namespace", "namespace PlayerUtils {", "PlayerUtils"},
+		{"Enum", "enum EGameState {", "EGameState"},
 		{"UCLASS (Should not match)", "UCLASS()", ""}, // Ensures we don't pick up Unreal macros as symbols
 	}
 
@@ -261,7 +261,8 @@ func TestGenerateDashboard(t *testing.T) {
 func TestFullUsageDetection(t *testing.T) {
 	testSymbol := "Logger"
 	// We use the exported GetFullUsageRegex function from IncludeAudit.go
-	fullUsageRegex := GetFullUsageRegex(testSymbol)
+	// Test without header context for simple patterns
+	fullUsageRegex := GetFullUsageRegex(testSymbol, "")
 
 	tests := []struct {
 		name     string
@@ -269,6 +270,7 @@ func TestFullUsageDetection(t *testing.T) {
 		expected bool // true = Essential, false = Forward candidate
 	}{
 		{"Static Call", "Logger::addMessage()", true},
+		{"Template Argument", "Cast<Logger>(Other)", true},
 		{"Pointer Check", "if (Logger* Ptr)", false}, // Forward Declaration is enough
 		{"Member Access", "Logger.Field", true},
 		{"Pointer Access", "Logger->Field", true},
@@ -286,4 +288,13 @@ func TestFullUsageDetection(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("Variable Member Access from Header", func(t *testing.T) {
+		header := "TObjectPtr<class Logger> MyComponent;"
+		regex := GetFullUsageRegex(testSymbol, header)
+		content := "MyComponent->isValid = true;"
+		if !regex.MatchString(content) {
+			t.Errorf("Expected match for variable member access defined in header")
+		}
+	})
 }

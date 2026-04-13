@@ -39,14 +39,41 @@ var (
 
 	// SymbolRegex matches Unreal Symbols: Look for 'class', 'struct', 'enum', or 'namespace'
 	// followed by an optional API macro (e.g. UTILITYFEATURES_API) and the symbol name.
-	SymbolRegex = regexp.MustCompile(`\b(class|struct|enum|namespace)\s+(?:[A-Z0-9_]+_API\s+)?([a-zA-Z0-9_]+)`)
+	// It ensures it doesn't match forward declarations by checking it's NOT followed by a semicolon.
+	SymbolRegex = regexp.MustCompile(`\b(class|struct|enum|namespace)\s+(?:[A-Z0-9_]+_API\s+)?([a-zA-Z0-9_]+)\s*[{:]`)
 )
 
 // GetFullUsageRegex returns a compiled regex for detecting "Full" usage of a specific symbol.
-// Full usage includes member access (->, .), construction (new, constructor call), or static calls (::).
-// It uses \b word boundaries to ensure we match exactly the symbol name.
-func GetFullUsageRegex(symbol string) *regexp.Regexp {
-	pattern := fmt.Sprintf(`\b%s\b\s*(\.|->|::|\(|[a-zA-Z0-9_]+\s*(\[|;|\s+|=|\())|new\s+\b%s\b`, symbol, symbol)
+// Full usage includes member access (->, .), construction (new, constructor call),
+// static calls (::), or being used in template arguments (Cast<T>, NewObject<T>).
+func GetFullUsageRegex(symbol string, headerText string) *regexp.Regexp {
+	// 1. Core usage: symbol.Member, symbol->Member, symbol(), etc.
+	pattern := fmt.Sprintf(`\b%s\b\s*(\.|->|::|\(|[a-zA-Z0-9_]+\s*(\[|;|\s+|=|\())|<\s*%s\s*>|new\s+\b%s\b`, symbol, symbol, symbol)
+
+	// 2. Variable usage: Find variables of this type in the header
+	// Pattern: TObjectPtr<Symbol> SomeVar; or Symbol* SomeVar;
+	varNames := []string{}
+
+	// Look for TObjectPtr<Symbol> Name;
+	tPtrRegex := regexp.MustCompile(fmt.Sprintf(`TObjectPtr\s*<\s*(?:class|struct)?\s*\b%s\b\s*>\s+([a-zA-Z0-9_]+)`, symbol))
+	for _, m := range tPtrRegex.FindAllStringSubmatch(headerText, -1) {
+		if len(m) > 1 {
+			varNames = append(varNames, m[1])
+		}
+	}
+	// Look for Symbol* Name;
+	ptrRegex := regexp.MustCompile(fmt.Sprintf(`(?:\bclass\b|\bstruct\b)?\s*\b%s\b\s*\*+\s*([a-zA-Z0-9_]+)`, symbol))
+	for _, m := range ptrRegex.FindAllStringSubmatch(headerText, -1) {
+		if len(m) > 1 {
+			varNames = append(varNames, m[1])
+		}
+	}
+
+	// Add variable member access to pattern: varName-> or varName.
+	for _, name := range varNames {
+		pattern += fmt.Sprintf(`|\b%s\b\s*(?:->|\.|\()`, name)
+	}
+
 	return regexp.MustCompile(pattern)
 }
 
@@ -138,20 +165,22 @@ func buildSymbolRegistry(dir string, includeRegex, symbolRegex *regexp.Regexp) (
 		if ext == ".h" && !strings.Contains(path, ".generated.h") {
 			audit := scanFile(path, includeRegex, symbolRegex)
 
+			// Clean the file path/name for storage and matching
+			headerName := filepath.Base(path)
+
 			// Register each symbol found in this header
 			for _, symbol := range audit.Symbols {
 				// Store the symbol and the filename where it lives
 				// We check if it is already in the list to avoid exact duplicates
 				found := false
-				newHeader := filepath.Base(path)
 				for _, existingHeader := range symbolRegistry[symbol] {
-					if existingHeader == newHeader {
+					if existingHeader == headerName {
 						found = true
 						break
 					}
 				}
 				if !found {
-					symbolRegistry[symbol] = append(symbolRegistry[symbol], newHeader)
+					symbolRegistry[symbol] = append(symbolRegistry[symbol], headerName)
 				}
 			}
 		}
@@ -230,11 +259,39 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 			// This prevents false positives where a symbol is mentioned in a comment
 			cleanText := stripComments(fileText)
 
+			// OPTIMIZATION: Get the content of the corresponding header (.h)
+			// We check this to see if a symbol was ALREADY forward declared in the header.
+			headerPath := strings.TrimSuffix(path, ".cpp") + ".h"				// Convert from Private/XXX.cpp to Public/XXX.h for standard Unreal structure
+				if _, err := os.Stat(headerPath); os.IsNotExist(err) {
+					altPath := strings.Replace(headerPath, "\\Private\\", "\\Public\\", 1)
+					if _, err := os.Stat(altPath); err == nil {
+						headerPath = altPath
+					}
+				}
+			headerText := ""
+			if _, err := os.Stat(headerPath); err == nil {
+				hContent, _ := os.ReadFile(headerPath)
+				headerText = string(hContent)
+				// Add the header content to the full text to find usage across both files
+				cleanText += "\n" + stripComments(headerText)
+			}
+
 			fmt.Printf("\n📄 File: %s\n", path)
 			summary := FileSummary{Path: path}
 
 			// 2. For each include, check if any of its symbols are used
 			for _, include := range audit.Includes {
+				// SKIP: If the current file is "MyFile.cpp" and we are looking at "MyFile.h",
+				// it is ALWAYS essential to have your own header.
+				if strings.TrimSuffix(filepath.Base(path), ".cpp") == strings.TrimSuffix(include, ".h") {
+					summary.Includes = append(summary.Includes, IncludeStatus{
+						Name:   include,
+						Status: "Essential",
+					})
+					fmt.Printf("   ✅ Essential: #include \"%s\" (Own Header)\n", include)
+					continue
+				}
+
 				status := "Unknown"
 				symbolsInThisHeader := []string{}
 
@@ -249,18 +306,44 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 				}
 
 				// Check if any of these symbols appear in the CLEANED .cpp text
-				isPointerUsage := true
+				hasAnyFullUsage := false
 				hasAnyUsage := false
+
+				// FORWARD DECLARATION OPTIMIZATION:
+				alreadyForwardDeclared := false
 
 				for _, symbol := range symbolsInThisHeader {
 					// We use a case-sensitive substring check for the quick first pass.
-					// This is much faster than running a regex on every symbol in every file.
 					if strings.Contains(cleanText, symbol) {
 						hasAnyUsage = true
-						// If we find the symbol, then we do a more expensive regex check to see if it's "Full" or just Pointer.
-						if GetFullUsageRegex(symbol).MatchString(cleanText) {
-							isPointerUsage = false
-							break
+
+						// Check usage in .cpp specifically
+						cppContent, _ := os.ReadFile(path)
+						cppOnlyText := stripComments(string(cppContent))
+
+						fullUsageRegex := GetFullUsageRegex(symbol, headerText)
+						cppFullUsage := fullUsageRegex.MatchString(cppOnlyText)
+
+						if fullUsageRegex.MatchString(cleanText) {
+							hasAnyFullUsage = true
+						}
+
+						// Check if it was forward declared in the local header
+						fwdPattern := fmt.Sprintf(`\b(class|struct|namespace)\s+\b%s\b\s*;`, symbol)
+						if headerText != "" && regexp.MustCompile(fwdPattern).MatchString(headerText) {
+							if !cppFullUsage {
+								alreadyForwardDeclared = true
+							}
+						}
+					}
+
+					// SECOND PASS: Even if the symbol name itself isn't in cleanText,
+					// check for mapped variables from the header (e.g. abilitySystemComponent->)
+					if !hasAnyFullUsage {
+						fullUsageRegex := GetFullUsageRegex(symbol, headerText)
+						if fullUsageRegex.MatchString(cleanText) {
+							hasAnyUsage = true
+							hasAnyFullUsage = true
 						}
 					}
 				}
@@ -269,20 +352,26 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 				suggestion := ""
 				if len(symbolsInThisHeader) > 0 {
 					if hasAnyUsage {
-						if isPointerUsage {
-							status = "Forward"
-							summary.ForwardCount++
-
-							// Suggest forward declaration based on prefix (Unreal Convention)
-							prefix := "class"
-							if len(symbolsInThisHeader[0]) > 0 && symbolsInThisHeader[0][0] == 'F' {
-								prefix = "struct"
-							}
-							suggestion = fmt.Sprintf("%s %s;", prefix, symbolsInThisHeader[0])
-							fmt.Printf("   💡 FORWARD:   #include \"%s\" (Only pointers/refs used. Suggest: %s)\n", include, suggestion)
-						} else {
+						if hasAnyFullUsage {
 							status = "Essential"
 							fmt.Printf("   ✅ Essential: #include \"%s\"\n", include)
+						} else {
+							// If it's already forward declared, the include in the .cpp is redundant
+							if alreadyForwardDeclared {
+								status = "Redundant"
+								summary.RedundantCount++
+								fmt.Printf("   ⚠️  REDUNDANT: #include \"%s\" (Already forward declared in header)\n", include)
+							} else {
+								status = "Forward"
+								summary.ForwardCount++
+								// Suggest forward declaration based on prefix (Unreal Convention)
+								prefix := "class"
+								if len(symbolsInThisHeader[0]) > 0 && symbolsInThisHeader[0][0] == 'F' {
+									prefix = "struct"
+								}
+								suggestion = fmt.Sprintf("%s %s;", prefix, symbolsInThisHeader[0])
+								fmt.Printf("   💡 FORWARD:   #include \"%s\" (Only pointers/refs used. Suggest: %s)\n", include, suggestion)
+							}
 						}
 					} else {
 						status = "Redundant"
