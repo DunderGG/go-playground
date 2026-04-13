@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -37,6 +38,16 @@ type Config struct {
 	SearchTags        []string
 	IgnoreFolders     []string
 	AllowedExtensions []string
+}
+
+// Finding represents a single technical debt entry found in the source code.
+// The 'json:"file"' parts tell the JSON encoder how to name these fields when converting to JSON, which is useful for the API endpoint.
+type Finding struct {
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Tag     string `json:"tag"`
+	Author  string `json:"author"`
+	Content string `json:"content"`
 }
 
 func main() {
@@ -64,10 +75,23 @@ func main() {
 
 	fmt.Printf("Found %d files to scan. Commencing concurrent audit...\n", len(filesToScan))
 
-	// Step 3: Implement Concurrent Scanning Engine
-	totalFindings := startWorkerPool(filesToScan, config)
+	// Step 3 & 4: Concurrent Scanning Engine with Regex Matcher
+	findings := startWorkerPool(filesToScan, config)
 
-	fmt.Printf("Audit complete! Total findings across all files: %d\n", totalFindings)
+	fmt.Printf("Audit complete! Total findings across all files: %d\n", len(findings))
+
+	// Print samples for verification
+	for i, f := range findings {
+		if i >= 10 { // Only show first 10
+			fmt.Println("...")
+			break
+		}
+		authorInfo := ""
+		if f.Author != "" {
+			authorInfo = fmt.Sprintf(" (%s)", f.Author)
+		}
+		fmt.Printf("[%s]%s %s:%d - %s\n", f.Tag, authorInfo, f.File, f.Line, f.Content)
+	}
 }
 
 // discoverFiles traverses the file tree starting at searchDir and returns a list of files matching scan criteria.
@@ -95,20 +119,29 @@ func discoverFiles(searchDir string, config Config) ([]string, error) {
 }
 
 // startWorkerPool initializes a pool of worker goroutines to scan files concurrently.
-// It distributes the file paths across workers and aggregates the total number of findings.
+// It distributes the file paths across workers and aggregates the results.
 //
 // Parameters:
 //   - filesToScan: A slice of strings containing the paths of files to be audited.
 //   - config: The Config struct containing SearchTags and other scanner settings.
 //
 // Returns:
-//   - int: The total sum of findings across all scanned files.
-func startWorkerPool(filesToScan []string, config Config) int {
+//   - []Finding: A slice of all findings discovered across all scanned files.
+func startWorkerPool(filesToScan []string, config Config) []Finding {
 	const numWorkers = 20
 	// Create channels for job distribution and result collection
 	fileJobs := make(chan string, len(filesToScan))
-	results := make(chan int, len(filesToScan))
+	results := make(chan []Finding, len(filesToScan))
 	var waitGroup sync.WaitGroup
+
+	// Compile the case-insensitive regex once for performance.
+	// This pattern searches for:
+	// 		Group 1: One of the search tags (e.g., TODO, FIXME)
+	//	 	Group 2: An optional author name following a hyphen (e.g., TODO-Dunder)
+	// 		Group 3: A colon followed by any amount of whitespace
+	// 		Group 4: The remaining text on the line as the description/content
+	pattern := fmt.Sprintf(`(?i)(%s)(?:-([A-Z]+))?:\s*(.*)`, strings.Join(config.SearchTags, "|"))
+	regex := regexp.MustCompile(pattern)
 
 	// Spawn workerIndex goroutines
 	for workerIndex := 1; workerIndex <= numWorkers; workerIndex++ {
@@ -122,8 +155,8 @@ func startWorkerPool(filesToScan []string, config Config) int {
 			defer waitGroup.Done()
 			// Range over the jobs channel. Each job is a file path to scan.
 			for path := range fileJobs {
-				count := scanFile(path, config)
-				results <- count
+				findings := scanFile(path, regex)
+				results <- findings
 			}
 		}()
 	}
@@ -140,12 +173,12 @@ func startWorkerPool(filesToScan []string, config Config) int {
 		close(results)
 	}()
 
-	totalFindings := 0
-	for count := range results {
-		totalFindings += count
+	var allFindings []Finding
+	for findings := range results {
+		allFindings = append(allFindings, findings...)
 	}
 
-	return totalFindings
+	return allFindings
 }
 
 // shouldScan evaluates if a file should be audited based on its path and the provided configuration.
@@ -175,34 +208,49 @@ func shouldScan(path string, config Config) bool {
 	return false
 }
 
-// scanFile reads a file line-by-line and identifies lines containing technical debt tags.
+// scanFile reads a file line-by-line and identifies lines containing technical debt tags using regex.
 //
 // Parameters:
 //   - filePath: The path of the file to scan.
-//   - config: The Config struct containing SearchTags.
+//   - re: The compiled regular expression for identifying tags and authors.
 //
 // Returns:
-//   - int: The count of findings in this file.
-func scanFile(filePath string, config Config) int {
+//   - []Finding: A slice of Finding structs discovered in this file.
+func scanFile(filePath string, regex *regexp.Regexp) []Finding {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return 0
+		fmt.Printf("Error opening file %s: %v\n", filePath, err)
+		return nil
 	}
 	defer file.Close()
 
-	findings := 0
+	var findings []Finding
 	scanner := bufio.NewScanner(file)
-	// Some files might be very large or have very long lines, we can adjust buffer if needed.
+	lineNum := 0
 	for scanner.Scan() {
+		lineNum++
+		// Read the current line of the file
 		line := scanner.Text()
-		// Convert line to uppercase for case-insensitive search
-		upperLine := strings.ToUpper(line)
-		for _, tag := range config.SearchTags {
-			if strings.Contains(upperLine, tag) {
-				findings++
-				break
+		// Use the precompiled regex to find matches in the current line.
+		matches := regex.FindStringSubmatch(line)
+		// If matches are found, create a Finding struct with the relevant information and add it to the findings slice.
+		if len(matches) > 0 {
+			finding := Finding{
+				File: filePath,
+				Line: lineNum,
+				// matches[1] contains the tag (e.g., TODO),
+				// matches[2] contains the optional author (e.g., Dunder), and
+				// matches[3] contains the content of the comment.
+				Tag:     strings.ToUpper(matches[1]),
+				Author:  matches[2],
+				Content: strings.TrimSpace(matches[3]),
 			}
+			findings = append(findings, finding)
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("Error reading file %s: %v\n", filePath, err)
+		return nil
 	}
 	return findings
 }
