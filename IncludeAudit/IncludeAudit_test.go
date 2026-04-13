@@ -143,8 +143,8 @@ func TestScanFile(t *testing.T) {
 	}
 }
 
-// TestAnalyzeCppFilesLogic Integration Test verifies the full two-pass logic.
-func TestAnalyzeCppFilesLogic(t *testing.T) {
+// TestAnalyzeFilesLogic Integration Test verifies the full two-pass logic.
+func TestAnalyzeFilesLogic(t *testing.T) {
 	tests := []struct {
 		name             string
 		registry         map[string][]string
@@ -184,7 +184,7 @@ func TestAnalyzeCppFilesLogic(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			summaries, err := analyzeCppFiles(tmpDir, IncludeRegex, test.registry)
+			summaries, err := analyzeFiles(tmpDir, IncludeRegex, test.registry)
 			if err != nil {
 				t.Fatal(err)
 			}

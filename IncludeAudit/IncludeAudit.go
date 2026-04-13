@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -47,8 +48,20 @@ var (
 // Full usage includes member access (->, .), construction (new, constructor call),
 // static calls (::), or being used in template arguments (Cast<T>, NewObject<T>).
 func GetFullUsageRegex(symbol string, headerText string) *regexp.Regexp {
+	// Special Case: Unreal Interfaces (UInterface -> IInterface)
+	// If we are looking for UMyInterface, we also want to catch IMyInterface
+	symbolPattern := regexp.QuoteMeta(symbol)
+	if strings.HasPrefix(symbol, "U") && len(symbol) > 1 && unicode.IsUpper(rune(symbol[1])) {
+		interfaceSymbol := "I" + symbol[1:]
+		symbolPattern = fmt.Sprintf(`(?:%s|%s)`, symbolPattern, regexp.QuoteMeta(interfaceSymbol))
+	}
+
 	// 1. Core usage: symbol.Member, symbol->Member, symbol(), etc.
-	pattern := fmt.Sprintf(`\b%s\b\s*(\.|->|::|\(|[a-zA-Z0-9_]+\s*(\[|;|\s+|=|\())|<\s*%s\s*>|new\s+\b%s\b`, symbol, symbol, symbol)
+	// Also detect inheritance: : public symbol, , public symbol
+	// And interfaces/bases: public ISomeInterface
+	//TODO This regex is insane... Can it be simplified? Maybe we can break it into multiple checks instead of one giant regex?
+	pattern := fmt.Sprintf(`\b%s\b\s*(\.|->|::|\(|[a-zA-Z0-9_]+\s*(\[|;|\s+|=|\())|<\s*%s\s*>|new\s+\b%s\b|:\s*(?:public|protected|private|virtual\s+public|virtual\s+protected|virtual\s+private)\s+\b%s\b|,\s*(?:public|protected|private|virtual\s+public|virtual\s+protected|virtual\s+private)\s+\b%s\b`,
+		symbolPattern, symbolPattern, symbolPattern, symbolPattern, symbolPattern)
 
 	// 2. Variable usage: Find variables of this type in the header
 	// Pattern: TObjectPtr<Symbol> SomeVar; or Symbol* SomeVar;
@@ -124,9 +137,9 @@ func main() {
 		fmt.Printf("   %-20s -> %s\n", sym, strings.Join(headers, ", "))
 	}
 
-	// Step 2: Second Pass - Identify redundant includes in .cpp files
-	fmt.Println("\n🔍 Analyzing .cpp files for redundant includes...")
-	summaries, err := analyzeCppFiles(targetDir, IncludeRegex, symbolRegistry)
+	// Step 2: Second Pass - Identify redundant includes in .cpp and .h files
+	fmt.Println("\n🔍 Analyzing files for redundant includes...")
+	summaries, err := analyzeFiles(targetDir, IncludeRegex, symbolRegistry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error analyzing files: %v\n", err)
 	}
@@ -230,18 +243,25 @@ func scanFile(path string, includeRegex, symbolRegex *regexp.Regexp) FileAudit {
 	return audit
 }
 
-// analyzeCppFiles performs the "Second Pass" by scanning .cpp files to see
-// which of their included headers are actually needed based on symbol usage.
+// analyzeFiles performs the "Second Pass" by scanning both .cpp and .h files
+// to see which of their included headers are actually needed.
+//
+// For .cpp files, it also analyzes the corresponding .h file to map member variable
+// types to variable names, allowing it to detect member access (e.g., var->Member)
+// even if the class type name itself isn't present in the source.
+//
+// For .h files, it verifies if the includes are necessary for the declarations
+// within that header and suggests forward declarations where possible.
 //
 // Input:
-//   - dir: The root folder to scan for .cpp files.
+//   - dir: The root folder to scan.
 //   - includeRegex: The compiled regex for detecting #include.
 //   - symbolRegistry: Our global map[Symbol][]Headers from the first pass.
 //
 // Output:
 //   - []FileSummary: A list of audit results for each file.
 //   - error: Returns any directory traversal errors.
-func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map[string][]string) ([]FileSummary, error) {
+func analyzeFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map[string][]string) ([]FileSummary, error) {
 	var summaries []FileSummary
 
 	err := filepath.WalkDir(dir, func(path string, dirEntry os.DirEntry, err error) error {
@@ -249,7 +269,8 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 			return nil
 		}
 
-		if strings.ToLower(filepath.Ext(path)) == ".cpp" {
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".cpp" || (ext == ".h" && !strings.Contains(path, ".generated.h")) {
 			// 1. Get all includes and the full content of the file
 			audit := extractIncludes(path, includeRegex)
 			content, _ := os.ReadFile(path)
@@ -259,21 +280,26 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 			// This prevents false positives where a symbol is mentioned in a comment
 			cleanText := stripComments(fileText)
 
-			// OPTIMIZATION: Get the content of the corresponding header (.h)
-			// We check this to see if a symbol was ALREADY forward declared in the header.
-			headerPath := strings.TrimSuffix(path, ".cpp") + ".h"				// Convert from Private/XXX.cpp to Public/XXX.h for standard Unreal structure
+			headerText := ""
+			// If it's a .cpp, look for matching .h context
+			if ext == ".cpp" {
+				headerPath := strings.TrimSuffix(path, ".cpp") + ".h"
+				// Convert from Private/XXX.cpp to Public/XXX.h for standard Unreal structure
 				if _, err := os.Stat(headerPath); os.IsNotExist(err) {
 					altPath := strings.Replace(headerPath, "\\Private\\", "\\Public\\", 1)
 					if _, err := os.Stat(altPath); err == nil {
 						headerPath = altPath
 					}
 				}
-			headerText := ""
-			if _, err := os.Stat(headerPath); err == nil {
-				hContent, _ := os.ReadFile(headerPath)
-				headerText = string(hContent)
-				// Add the header content to the full text to find usage across both files
-				cleanText += "\n" + stripComments(headerText)
+				if _, err := os.Stat(headerPath); err == nil {
+					hContent, _ := os.ReadFile(headerPath)
+					headerText = string(hContent)
+					// Add the header content to the full text to find usage across both files
+					cleanText += "\n" + stripComments(headerText)
+				}
+			} else {
+				// If it's a .h, the context for variable mapping is itself
+				headerText = fileText
 			}
 
 			fmt.Printf("\n📄 File: %s\n", path)
@@ -283,7 +309,7 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 			for _, include := range audit.Includes {
 				// SKIP: If the current file is "MyFile.cpp" and we are looking at "MyFile.h",
 				// it is ALWAYS essential to have your own header.
-				if strings.TrimSuffix(filepath.Base(path), ".cpp") == strings.TrimSuffix(include, ".h") {
+				if ext == ".cpp" && strings.TrimSuffix(filepath.Base(path), ".cpp") == strings.TrimSuffix(include, ".h") {
 					summary.Includes = append(summary.Includes, IncludeStatus{
 						Name:   include,
 						Status: "Essential",
@@ -305,7 +331,7 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 					}
 				}
 
-				// Check if any of these symbols appear in the CLEANED .cpp text
+				// Check if any of these symbols appear in the CLEANED text
 				hasAnyFullUsage := false
 				hasAnyUsage := false
 
@@ -317,22 +343,20 @@ func analyzeCppFiles(dir string, includeRegex *regexp.Regexp, symbolRegistry map
 					if strings.Contains(cleanText, symbol) {
 						hasAnyUsage = true
 
-						// Check usage in .cpp specifically
-						cppContent, _ := os.ReadFile(path)
-						cppOnlyText := stripComments(string(cppContent))
+						// Check usage in CURRENT file specifically
+						fileFullUsage := GetFullUsageRegex(symbol, headerText).MatchString(cleanText)
 
-						fullUsageRegex := GetFullUsageRegex(symbol, headerText)
-						cppFullUsage := fullUsageRegex.MatchString(cppOnlyText)
-
-						if fullUsageRegex.MatchString(cleanText) {
+						if fileFullUsage {
 							hasAnyFullUsage = true
 						}
 
-						// Check if it was forward declared in the local header
-						fwdPattern := fmt.Sprintf(`\b(class|struct|namespace)\s+\b%s\b\s*;`, symbol)
-						if headerText != "" && regexp.MustCompile(fwdPattern).MatchString(headerText) {
-							if !cppFullUsage {
-								alreadyForwardDeclared = true
+						// For .cpp files, check if it was forward declared in the local header
+						if ext == ".cpp" && headerText != "" {
+							fwdPattern := fmt.Sprintf(`\b(class|struct|namespace)\s+\b%s\b\s*;`, symbol)
+							if regexp.MustCompile(fwdPattern).MatchString(headerText) {
+								if !fileFullUsage {
+									alreadyForwardDeclared = true
+								}
 							}
 						}
 					}
