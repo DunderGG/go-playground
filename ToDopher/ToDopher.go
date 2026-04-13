@@ -25,7 +25,9 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"html/template"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -80,18 +82,61 @@ func main() {
 
 	fmt.Printf("Audit complete! Total findings across all files: %d\n", len(findings))
 
-	// Print samples for verification
-	for i, f := range findings {
-		if i >= 10 { // Only show first 10
-			fmt.Println("...")
-			break
-		}
-		authorInfo := ""
-		if f.Author != "" {
-			authorInfo = fmt.Sprintf(" (%s)", f.Author)
-		}
-		fmt.Printf("[%s]%s %s:%d - %s\n", f.Tag, authorInfo, f.File, f.Line, f.Content)
+	// Step 5: Generate static HTML report
+	err = generateHtmlReport(findings, "report.html")
+	if err != nil {
+		fmt.Printf("Error generating report: %v\n", err)
+		return
 	}
+
+	if absPath, err := filepath.Abs("report.html"); err == nil {
+		fmt.Printf("📊 Report generated successfully at:\n %s\n", absPath)
+	} else {
+		fmt.Println("📊 Report generated successfully at:\n report.html")
+	}
+}
+
+// generateHtmlReport creates a standalone HTML file containing the audit findings by injecting data into a template.
+//
+// Parameters:
+//   - findings: A slice of Finding structs to be included in the report.
+//   - outputPath: The file path where the HTML report will be saved.
+//
+// Returns:
+//   - error: Any error encountered during file creation or template execution.
+func generateHtmlReport(findings []Finding, outputPath string) error {
+	jsonData, err := json.Marshal(findings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal findings to JSON: %w", err)
+	}
+
+	// Prepare data for the template
+	data := struct {
+		FindingsJSON template.JS
+	}{
+		FindingsJSON: template.JS(jsonData),
+	}
+
+	// Read and parse the template file
+	tmpl, err := template.ParseFiles("template.html")
+	if err != nil {
+		return fmt.Errorf("failed to parse template file: %w", err)
+	}
+
+	// Create the output file
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create report file: %w", err)
+	}
+	defer file.Close()
+
+	// Execute the template and write to the file
+	if err := tmpl.Execute(file, data); err != nil {
+		return fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	fmt.Printf("📊 Report generated successfully at %s\n", outputPath)
+	return nil
 }
 
 // discoverFiles traverses the file tree starting at searchDir and returns a list of files matching scan criteria.
