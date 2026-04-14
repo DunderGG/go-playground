@@ -80,7 +80,11 @@ func main() {
 	// Step 3 & 4: Concurrent Scanning Engine with Regex Matcher
 	findings := startWorkerPool(filesToScan, config)
 
-	fmt.Printf("Audit complete! Total findings across all files: %d\n", len(findings))
+	// Clear progress line before moving to the summary
+	// I think it actually looks better to keep the progress bar and just print the summary on a new line. This might change.
+	//fmt.Print("\r\033[K")
+
+	fmt.Printf("\nAudit complete! Total findings across all files: %d\n", len(findings))
 
 	// Step 5: Generate static HTML report
 	err = generateHtmlReport(findings, "report.html")
@@ -136,7 +140,6 @@ func generateHtmlReport(findings []Finding, outputPath string) error {
 		return fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	fmt.Printf("📊 Report generated successfully at %s\n", outputPath)
 	return nil
 }
 
@@ -175,9 +178,11 @@ func discoverFiles(searchDir string, config Config) ([]string, error) {
 //   - []Finding: A slice of all findings discovered across all scanned files.
 func startWorkerPool(filesToScan []string, config Config) []Finding {
 	const numWorkers = 20
+	totalFiles := len(filesToScan)
+
 	// Create channels for job distribution and result collection
-	fileJobs := make(chan string, len(filesToScan))
-	results := make(chan []Finding, len(filesToScan))
+	fileJobs := make(chan string, totalFiles)
+	results := make(chan []Finding, totalFiles)
 	var waitGroup sync.WaitGroup
 
 	// Compile the case-insensitive regex once for performance.
@@ -213,18 +218,58 @@ func startWorkerPool(filesToScan []string, config Config) []Finding {
 	}
 	close(fileJobs)
 
-	// Wait for all workers to finish and close results channel in a separate goroutine
+	// Result collector and Progress Bar logic
+	var allFindings []Finding
+	count := 0
+	done := make(chan bool)
+
+	// This goroutine collects results from the workers and updates the progress bar.
 	go func() {
-		waitGroup.Wait()
-		close(results)
+		for findings := range results {
+			// The ... tells Go to "unpack" the slice and append each element individually to allFindings.
+			allFindings = append(allFindings, findings...)
+			count++
+			printProgressBar(count, totalFiles)
+		}
+		done <- true
 	}()
 
-	var allFindings []Finding
-	for findings := range results {
-		allFindings = append(allFindings, findings...)
-	}
+	// Wait for all workers to finish and close results channel
+	waitGroup.Wait()
+	close(results)
+
+	// Wait for result collector to finish aggregating all data
+	<-done
 
 	return allFindings
+}
+
+// printProgressBar renders a simple ASCII progress bar in the terminal to provide visual feedback
+// during the file scanning process. It uses carriage returns (\r) to update the same line.
+//
+// Parameters:
+//   - current: The number of files processed so far.
+//   - total: The total number of files to be scanned.
+func printProgressBar(current, total int) {
+	width := 40
+	percent := float64(current) / float64(total)
+	filled := int(percent * float64(width))
+
+	bar := "["
+	// The loop constructs the visual representation of the progress bar.
+	// It fills the bar with "=" characters for completed portions, a ">" character for the current position, and spaces for the remaining portion.
+	for i := 0; i < width; i++ {
+		if i < filled {
+			bar += "="
+		} else if i == filled {
+			bar += ">"
+		} else {
+			bar += " "
+		}
+	}
+	bar += "]"
+
+	fmt.Printf("\rScanning: %s %d/%d (%d%%)", bar, current, total, int(percent*100))
 }
 
 // shouldScan evaluates if a file should be audited based on its path and the provided configuration.
