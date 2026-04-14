@@ -32,15 +32,11 @@ go build -o ToDopher.exe ToDopher.go
 
 ## 📖 Usage
 
-1. **Launch**: Open the GoVid application.
-2. **URL**: Paste the video URL into the input field.
-3. **Configuration**: Select your desired output format (MP4, MKV, or MP3) and maximum resolution.
-4. **Save Location**: Choose the directory where you want to save the file.
-5. **Download**: Click the "Download" button to start the process. You can monitor the progress in real-time.
+TODO
 
 ### Command Line Options
 
-- `--update`: Updates the underlying `yt-dlp` tool to the latest version.
+TODO
 
 ## 📊 The Report
 After running the audit, ToDopher generates a `report.html` file in the project folder. 
@@ -50,24 +46,24 @@ After running the audit, ToDopher generates a `report.html` file in the project 
 3. **No Server Required**: The report is a portable, standalone file.
 
 ## 🛠️ Configuration
-Currently, ToDopher is configured via the `Config` struct in [ToDopher.go](ToDopher.go#L39-L43):
+Currently, ToDopher is configured via the `Config` struct in [ToDopher.go](ToDopher.go#L44-L48):
 - **Search Tags**: `TODO`, `FIXME`, `HACK`, `BUG`, `SUGGESTION`, `IDEA`, `REWORK`.
 - **Allowed Extensions**: `.h`, `.cpp`, `.cs`, `.py`, `.ini`, `.go`, `.java`, `.html`.
 
 ## 📜 Roadmap
-- [ O ] **Git Blame Integration**: Automatically fetch the author and date of each TODO from Git history.
-- [ X ] **Context Lines**: Capture 2-3 lines of surrounding code for better auditing.
+- [x] **Git Blame Integration**: Automatically fetch the author and date of each TODO from Git history.
+- [x] **Context Lines**: Capture 2-3 lines of surrounding code for better auditing.
 - [ ] **JSON/Markdown Export**: For integration with CI/CD pipelines.
 - [ ] **Custom Config**: For more tags, extensions and ignore folders.
 - [ ] **GUI**: For easier usage.
 
-O = Started, but not done.
-
-X = Done!
-
 ## 🛠️ Built With
 
-- TODO
+- **[Go](https://go.dev/)**: The core scanning engine, leveraging Goroutines for concurrency.
+- **[DataTables](https://datatables.net/)**: Powering the interactive dashboard with RowGroup for module organization.
+- **[Chart.js](https://www.chartjs.org/)**: Visualizing technical debt distribution via a dynamic pie chart.
+- **[jQuery](https://jquery.com/)**: Handling DOM manipulation and DataTables events.
+- **[Git](https://git-scm.com/)**: Integrated via `git blame` to automatically identify the authors of untagged TODOs.
 
 ## 👤 Author
 
