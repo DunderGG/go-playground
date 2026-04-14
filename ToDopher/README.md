@@ -30,6 +30,18 @@ go build -o ToDopher.exe ToDopher.go
 ./ToDopher.exe "C:\Path\To\Your\UnrealProject"
 ```
 
+## 📖 Usage
+
+1. **Launch**: Open the GoVid application.
+2. **URL**: Paste the video URL into the input field.
+3. **Configuration**: Select your desired output format (MP4, MKV, or MP3) and maximum resolution.
+4. **Save Location**: Choose the directory where you want to save the file.
+5. **Download**: Click the "Download" button to start the process. You can monitor the progress in real-time.
+
+### Command Line Options
+
+- `--update`: Updates the underlying `yt-dlp` tool to the latest version.
+
 ## 📊 The Report
 After running the audit, ToDopher generates a `report.html` file in the project folder. 
 
@@ -49,5 +61,14 @@ Currently, ToDopher is configured via the `Config` struct in [ToDopher.go](ToDop
 - [ ] **Custom Config**: For more tags, extensions and ignore folders.
 - [ ] **GUI**: For easier usage.
 
----
+## 🛠️ Built With
 
+- TODO
+
+## 👤 Author
+
+**David Bennehag** - [@dunder](https://github.com/dunder) - [dunder.gg](https://dunder.gg)
+
+## 📄 License
+
+This project is licensed under the GPL-3.0 - see the [LICENSE](LICENSE) file for details.
