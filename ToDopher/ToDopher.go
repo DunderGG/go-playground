@@ -22,9 +22,11 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,9 +35,10 @@ import (
 	"sync"
 )
 
+//go:embed assets/*
+var content embed.FS
+
 const (
-	// DefaultTemplatePath is the source HTML file used to generate the report.
-	DefaultTemplatePath = "template.html"
 	// DefaultOutputPath is the filename for the generated technical debt report.
 	DefaultOutputPath = "report.html"
 )
@@ -75,18 +78,18 @@ func main() {
 		searchDir = os.Args[1]
 	}
 
-	// Step 2: Walk the project directory and collect files to scan
+	// Walk the project directory and collect files to scan
 	filesToScan, err := discoverFiles(searchDir, config)
 	if err != nil {
 		fmt.Printf("Error walking the path: %v\n", err)
 		return
 	}
 
-	// Filter out the report file itself and the template to avoid self-scanning
+	// Filter out the report file itself to avoid self-scanning
 	var filteredFiles []string
 	for _, f := range filesToScan {
 		base := filepath.Base(f)
-		if base != DefaultOutputPath && base != DefaultTemplatePath {
+		if base != DefaultOutputPath {
 			filteredFiles = append(filteredFiles, f)
 		}
 	}
@@ -94,7 +97,7 @@ func main() {
 
 	fmt.Printf("Found %d files to scan. Commencing concurrent audit...\n", len(filesToScan))
 
-	// Step 3 & 4: Concurrent Scanning Engine with Regex Matcher
+	// Concurrent Scanning Engine with Regex Matcher
 	findings := startWorkerPool(filesToScan, config)
 
 	// Clear progress line before moving to the summary
@@ -103,7 +106,7 @@ func main() {
 
 	fmt.Printf("\nAudit complete! Total findings across all files: %d\n", len(findings))
 
-	// Step 5: Generate static HTML report
+	// Generate static HTML report
 	err = generateHtmlReport(findings, DefaultOutputPath)
 	if err != nil {
 		fmt.Printf("Error generating report: %v\n", err)
@@ -139,10 +142,17 @@ func generateHtmlReport(findings []Finding, outputPath string) error {
 		FindingsJSON: template.JS(jsonData),
 	}
 
-	// Read and parse the template file
-	tmpl, err := template.ParseFiles(DefaultTemplatePath)
+	// Read and parse the template from the embedded file system
+	tmpl, err := template.ParseFS(content, "assets/template.html")
 	if err != nil {
-		return fmt.Errorf("failed to parse template file: %w", err)
+		return fmt.Errorf("failed to parse embedded template: %w", err)
+	}
+
+	// After generating the HTML, we also need to ensure the assets folder exists
+	// alongside the report.html on the user's machine so the dashboard can load them.
+	// This function extracts the embedded assets/ folder to the physical disk.
+	if err := extractAssets(); err != nil {
+		return fmt.Errorf("failed to extract assets: %w", err)
 	}
 
 	// Create the output file
@@ -158,6 +168,32 @@ func generateHtmlReport(findings []Finding, outputPath string) error {
 	}
 
 	return nil
+}
+
+// extractAssets copies the embedded assets/ folder to the local disk.
+// This is necessary because report.html references local files like assets/jquery.min.js.
+func extractAssets() error {
+	return fs.WalkDir(content, "assets", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// MkdirAll will create the directory if it doesn't exist, and do nothing if it already exists.
+		// 0755 allows the owner to read/write/execute and others to read/execute.
+		if d.IsDir() {
+			return os.MkdirAll(path, 0755)
+		}
+
+		// Read the embedded file data
+		data, err := content.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		// Write it to the local disk
+		// 0644 allows the owner to read/write and others to read.
+		return os.WriteFile(path, data, 0644)
+	})
 }
 
 // discoverFiles traverses the file tree starting at searchDir and returns a list of files matching scan criteria.
