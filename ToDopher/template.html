@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ToDopher Report</title>
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+    <link rel="stylesheet" href="https://cdn.datatables.net/rowgroup/1.4.1/css/rowGroup.dataTables.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -186,6 +187,20 @@
             color: white;
             border-color: #238636;
         }
+
+        /* Grouping Styles */
+        tr.dtrg-group th {
+            background-color: var(--container-bg) !important;
+            color: var(--heading-color) !important;
+            text-align: left;
+            padding: 12px 10px !important;
+            border-bottom: 2px solid var(--border-color) !important;
+            font-size: 1rem;
+        }
+        tr.dtrg-group th span.module-icon {
+            color: #d29922;
+            margin-right: 8px;
+        }
     </style>
 </head>
 <body>
@@ -240,6 +255,7 @@
 
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
     <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/rowgroup/1.4.1/js/dataTables.rowGroup.min.js"></script>
     <script>
         const findings = {{.FindingsJSON}};
         const toggleSwitch = document.querySelector('#checkbox');
@@ -267,6 +283,18 @@
         }
 
         $(document).ready(function() {
+            // Process findings to extract Module/Folder
+            findings.forEach(f => {
+                const parts = f.file.replace(/\\/g, '/').split('/');
+                // In Unreal, the first folder usually defines the module or root (Source, Plugins, etc)
+                // We'll group by the containing folder path for a "Tree-like" feel
+                if (parts.length > 1) {
+                    f.grouping = parts.slice(0, -1).join('/');
+                } else {
+                    f.grouping = 'Project Root';
+                }
+            });
+
             // Extract unique authors and tags for filters
             const authors = [...new Set(findings.map(f => f.author))].filter(a => a).sort();
             const tags = [...new Set(findings.map(f => f.tag))].sort();
@@ -366,9 +394,20 @@
                             }
                             return html;
                         }
-                    }
+                    },
+                    { data: 'grouping', defaultContent: '' }
                 ],
-                order: [[0, 'asc']],
+                order: [[6, 'asc'], [0, 'asc']], // Sort by grouping then by Tag
+                rowGroup: {
+                    dataSrc: 'grouping',
+                    startRender: function (rows, group) {
+                        return $('<tr/>')
+                            .append('<th colspan="6"><span class="module-icon">📂</span> ' + group + ' (' + rows.count() + ' findings)</th>');
+                    }
+                },
+                columnDefs: [
+                    { targets: [6], visible: false } // Hide the raw grouping column
+                ],
                 createdRow: function(row, data, dataIndex) {
                     const tag = data.tag.toUpperCase();
                     if (tag === 'FIXME' || tag === 'BUG') {
