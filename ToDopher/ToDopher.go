@@ -187,11 +187,12 @@ func startWorkerPool(filesToScan []string, config Config) []Finding {
 
 	// Compile the case-insensitive regex once for performance.
 	// This pattern searches for:
+	// 		Prefix: Supports // (C++/Go), # (Python/Shell), /* (Block Start), or * (Block Middle)
 	// 		Group 1: One of the search tags (e.g., TODO, FIXME)
 	//	 	Group 2: An optional author name following a hyphen (e.g., TODO-Dunder)
 	// 		Group 3: A colon followed by any amount of whitespace
 	// 		Group 4: The remaining text on the line as the description/content
-	pattern := fmt.Sprintf(`(?i)(%s)(?:-([A-Z]+))?:\s*(.*)`, strings.Join(config.SearchTags, "|"))
+	pattern := fmt.Sprintf(`(?i)(?://|#|/\*|\*)\s*(%s)(?:-([A-Z]+))?:\s*(.*)`, strings.Join(config.SearchTags, "|"))
 	regex := regexp.MustCompile(pattern)
 
 	// Spawn workerIndex goroutines
