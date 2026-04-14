@@ -55,11 +55,15 @@ Currently, ToDopher is configured via the `Config` struct in [ToDopher.go](ToDop
 - **Allowed Extensions**: `.h`, `.cpp`, `.cs`, `.py`, `.ini`, `.go`, `.java`, `.html`.
 
 ## 📜 Roadmap
-- [ ] **Git Blame Integration**: Automatically fetch the author and date of each TODO from Git history.
-- [ ] **Context Lines**: Capture 2-3 lines of surrounding code for better auditing.
+- [ O ] **Git Blame Integration**: Automatically fetch the author and date of each TODO from Git history.
+- [ X ] **Context Lines**: Capture 2-3 lines of surrounding code for better auditing.
 - [ ] **JSON/Markdown Export**: For integration with CI/CD pipelines.
 - [ ] **Custom Config**: For more tags, extensions and ignore folders.
 - [ ] **GUI**: For easier usage.
+
+O = Started, but not done.
+
+X = Done!
 
 ## 🛠️ Built With
 
