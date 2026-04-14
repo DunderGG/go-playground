@@ -322,7 +322,7 @@ func shouldScan(path string, config Config) bool {
 //
 // Parameters:
 //   - filePath: The path of the file to scan.
-//   - re: The compiled regular expression for identifying tags and authors.
+//   - regex: The compiled regular expression for identifying tags and authors.
 //
 // Returns:
 //   - []Finding: A slice of Finding structs discovered in this file.

@@ -88,6 +88,24 @@
         .tag-bug { background-color: #f85149; }
         .tag-default { background-color: #6e7681; }
 
+        /* Search Highlight Style */
+        .highlight {
+            background-color: rgba(65, 132, 228, 0.4);
+            color: #f0f6fc;
+            padding: 0 2px;
+            border-radius: 2px;
+            font-weight: bold;
+        }
+
+        .highlight-search {
+            background-color: #ffd33d;
+            color: #24292f;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-weight: bold;
+            box-shadow: 0 0 5px rgba(255, 211, 61, 0.5);
+        }
+
         /* Row Highlighting based on Tag */
         table.dataTable tbody tr.priority-high td:first-child { border-left: 5px solid #da3633 !important; }
         table.dataTable tbody tr.priority-med td:first-child { border-left: 5px solid #d29922 !important; }
@@ -388,9 +406,19 @@
                     { 
                         data: 'content',
                         render: function(data, type, row) {
-                            let html = `<strong>${data}</strong>`;
+                            // Escape HTML content to prevent XSS
+                            let safeData = $('<div>').text(data).html();
+                            
+                            const tag = row.tag;
+                            const regex = new RegExp(`(${tag})`, 'gi');
+                            let html = `<div class="content-text"><strong>${safeData.replace(regex, '<span class="highlight">$1</span>')}</strong></div>`;
+                            
                             if (row.context && row.context.length > 0) {
-                                html += `<div class="context-code">${row.context.join('\n')}</div>`;
+                                let contextHtml = row.context.map(line => {
+                                    let safeLine = $('<div>').text(line).html();
+                                    return safeLine.replace(regex, '<span class="highlight">$1</span>');
+                                }).join('\n');
+                                html += `<div class="context-code">${contextHtml}</div>`;
                             }
                             return html;
                         }
@@ -427,6 +455,43 @@
 
             $('#tagFilter').on('change', function() {
                 table.column(0).search(this.value).draw();
+            });
+
+            // Real-time Search Highlighting
+            // We rebuild the Content cell HTML directly from the row's source data on every draw.
+            // This avoids all DOM/regex state issues — we never inspect the DOM, only write to it.
+            table.on('draw', function() {
+                const searchTerm = table.search();
+                const safeSearch = searchTerm ? searchTerm.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') : null;
+
+                table.rows({search: 'applied'}).every(function() {
+                    const data = this.data();
+                    const cellNode = table.cell(this.node(), 5).node();
+                    if (!cellNode) return;
+
+                    const tagRegex = new RegExp(`(${data.tag.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi');
+
+                    // Start from the raw escaped text, then layer highlights on top
+                    function applyHighlights(text) {
+                        let s = $('<div>').text(text).html();
+                        // Tag highlight (blue) applied first to plain escaped text
+                        s = s.replace(tagRegex, '<span class="highlight">$1</span>');
+                        // Search highlight (yellow) applied second
+                        if (safeSearch) {
+                            s = s.replace(new RegExp(`(${safeSearch})`, 'gi'), '<span class="highlight-search">$1</span>');
+                        }
+                        return s;
+                    }
+
+                    let html = `<div class="content-text"><strong>${applyHighlights(data.content)}</strong></div>`;
+
+                    if (data.context && data.context.length > 0) {
+                        const contextHtml = data.context.map(line => applyHighlights(line)).join('\n');
+                        html += `<div class="context-code">${contextHtml}</div>`;
+                    }
+
+                    $(cellNode).html(html);
+                });
             });
         });
     </script>
