@@ -88,9 +88,9 @@
         .tag-default { background-color: #6e7681; }
 
         /* Row Highlighting based on Tag */
-        table.dataTable tbody tr.priority-high { border-left: 4px solid #da3633 !important; }
-        table.dataTable tbody tr.priority-med { border-left: 4px solid #d29922 !important; }
-        table.dataTable tbody tr.priority-low { border-left: 4px solid #238636 !important; }
+        table.dataTable tbody tr.priority-high td:first-child { border-left: 5px solid #da3633 !important; }
+        table.dataTable tbody tr.priority-med td:first-child { border-left: 5px solid #d29922 !important; }
+        table.dataTable tbody tr.priority-low td:first-child { border-left: 5px solid #238636 !important; }
 
         .footer { margin-top: 2rem; text-align: center; color: var(--footer-color); font-size: 0.9rem; }
 
@@ -162,6 +162,30 @@
             border-left: 3px solid #d0d7de;
             color: #57606a;
         }
+
+        /* Copy Button Style */
+        .copy-btn {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--footer-color);
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            margin-top: 6px;
+            display: block;
+            width: fit-content;
+            transition: all 0.2s;
+        }
+        .copy-btn:hover {
+            background: var(--border-color);
+            color: var(--heading-color);
+        }
+        .copy-btn.copied {
+            background: #238636;
+            color: white;
+            border-color: #238636;
+        }
     </style>
 </head>
 <body>
@@ -229,6 +253,18 @@
         }
 
         toggleSwitch.addEventListener('change', switchTheme, false);
+
+        function copyToClipboard(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btn.innerText;
+                btn.innerText = '✅ Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.innerText = originalText;
+                    btn.classList.remove('copied');
+                }, 2000);
+            });
+        }
 
         $(document).ready(function() {
             // Extract unique authors and tags for filters
@@ -312,7 +348,13 @@
                         }
                     },
                     { data: 'author', defaultContent: '-' },
-                    { data: 'file' },
+                    { 
+                        data: 'file',
+                        render: function(data, type, row) {
+                            const pathLine = `${data}:${row.line}`;
+                            return `<span>${data}</span> <button class="copy-btn" onclick="copyToClipboard('${pathLine}', this)" title="Copy path:line for IDE">📋 Copy</button>`;
+                        }
+                    },
                     { data: 'line' },
                     { data: 'when', defaultContent: '-' },
                     { 
