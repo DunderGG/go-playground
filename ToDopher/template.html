@@ -16,7 +16,6 @@
             --heading-color: #f0f6fc;
             --footer-color: #8b949e;
             --table-hover: #21262d;
-            --chart-bg: #161b22;
         }
 
         body.light-mode {
@@ -27,7 +26,6 @@
             --heading-color: #24292f;
             --footer-color: #6e7781;
             --table-hover: #f6f8fa;
-            --chart-bg: #ffffff;
         }
 
         body { 
@@ -86,6 +84,9 @@
         .tag-fixme { background-color: #da3633; }
         .tag-hack { background-color: #d29922; }
         .tag-bug { background-color: #f85149; }
+        .tag-suggestion { background-color: #0969da; }
+        .tag-idea { background-color: #db61ad; }
+        .tag-rework { background-color: #8250df; }
         .tag-default { background-color: #6e7681; }
 
         /* Search Highlight Style */
@@ -110,6 +111,9 @@
         table.dataTable tbody tr.priority-high td:first-child { border-left: 5px solid #da3633 !important; }
         table.dataTable tbody tr.priority-med td:first-child { border-left: 5px solid #d29922 !important; }
         table.dataTable tbody tr.priority-low td:first-child { border-left: 5px solid #238636 !important; }
+        table.dataTable tbody tr.priority-suggestion td:first-child { border-left: 5px solid #0969da !important; }
+        table.dataTable tbody tr.priority-idea td:first-child { border-left: 5px solid #db61ad !important; }
+        table.dataTable tbody tr.priority-rework td:first-child { border-left: 5px solid #8250df !important; }
 
         .footer { margin-top: 2rem; text-align: center; color: var(--footer-color); font-size: 0.9rem; }
 
@@ -406,21 +410,14 @@
                     { 
                         data: 'content',
                         render: function(data, type, row) {
-                            // Escape HTML content to prevent XSS
-                            let safeData = $('<div>').text(data).html();
-                            
-                            const tag = row.tag;
-                            const regex = new RegExp(`(${tag})`, 'gi');
-                            let html = `<div class="content-text"><strong>${safeData.replace(regex, '<span class="highlight">$1</span>')}</strong></div>`;
-                            
-                            if (row.context && row.context.length > 0) {
-                                let contextHtml = row.context.map(line => {
-                                    let safeLine = $('<div>').text(line).html();
-                                    return safeLine.replace(regex, '<span class="highlight">$1</span>');
-                                }).join('\n');
-                                html += `<div class="context-code">${contextHtml}</div>`;
+                            // For filter/sort, return plain text so DataTables searches
+                            // raw content — not HTML markup — avoiding false matches on tag names.
+                            if (type === 'filter' || type === 'sort') {
+                                const contextText = (row.context || []).join(' ');
+                                return data + ' ' + contextText;
                             }
-                            return html;
+                            // Display rendering is handled entirely by the draw event handler.
+                            return data;
                         }
                     },
                     { data: 'grouping', defaultContent: '' }
@@ -440,10 +437,16 @@
                     const tag = data.tag.toUpperCase();
                     if (tag === 'FIXME' || tag === 'BUG') {
                         $(row).addClass('priority-high');
-                    } else if (tag === 'HACK' || tag === 'REWORK') {
+                    } else if (tag === 'HACK') {
                         $(row).addClass('priority-med');
                     } else if (tag === 'TODO') {
                         $(row).addClass('priority-low');
+                    } else if (tag === 'SUGGESTION') {
+                        $(row).addClass('priority-suggestion');
+                    } else if (tag === 'IDEA') {
+                        $(row).addClass('priority-idea');
+                    } else if (tag === 'REWORK') {
+                        $(row).addClass('priority-rework');
                     }
                 }
             });
