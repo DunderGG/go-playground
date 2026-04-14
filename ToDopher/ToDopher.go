@@ -31,8 +31,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 //go:embed assets/*
@@ -410,11 +412,52 @@ func scanFile(filePath string, regex *regexp.Regexp) []Finding {
 	return findings
 }
 
-// gitBlame uses the 'git blame' command to identify the author of a specific line in a file.
-// It leverages the --porcelain flag to parse machine-readable metadata from the Git history.
+// gitBlame uses the 'git log' command to find the very first person who introduced
+// the line containing the technical debt tag.
 //
-// TODO We should show who was the first author to add the line with a TODO, not the last one.
-// We can use "git log -L <line>,<line>:<file>" for that, but it is more complex to parse.
+// Parameters:
+//   - filePath: The path to the file to investigate.
+//   - line: The current line number.
+//
+// Returns:
+//   - string: The name of the original author.
+//   - string: The date (YYYY-MM-DD) when the line was first introduced.
+func gitBlame(filePath string, line int) (string, string) {
+	absPath, _ := filepath.Abs(filePath)
+	dir := filepath.Dir(absPath)
+
+	// rangeArg specifies the line range to trace in the format "start,end:file".
+	// In this case, we want to trace just the single line where the TODO was found, so start and end are the same.
+	// The filepath.Base is used to get just the filename, which is required by the -L option.
+	rangeArg := fmt.Sprintf("%d,%d:%s", line, line, filepath.Base(absPath))
+	// exec.Command is used to run the git log command with the specified arguments.
+	// -L tells git to trace the history of the specified line range,
+	// --reverse ensures we get the earliest commit, and
+	// --pretty=format specifies the output format to include the author name and date separated by a pipe character.
+	// --no-patch ensures we only get commit metadata without the diff.
+	cmd := exec.Command("git", "log", "-L", rangeArg, "--reverse", "--pretty=format:%an|%as", "--max-count=1", "--no-patch")
+	cmd.Dir = dir
+
+	// CombinedOutput runs the command and captures both stdout and stderr.
+	// If the command fails (e.g., if the line is uncommitted), it returns an error,
+	// which we catch to trigger the fallback blame method.
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fallbackBlame(filePath, line)
+	}
+
+	// The output is expected to be in the format "Author Name|YYYY-MM-DD".
+	// We split it by the pipe character to extract the author and date.
+	parts := strings.Split(strings.TrimSpace(string(output)), "|")
+	if len(parts) >= 2 {
+		return parts[0], parts[1]
+	}
+
+	return fallbackBlame(filePath, line)
+}
+
+// fallbackBlame is used when the deep history trace fails (e.g. for uncommitted local changes).
+// It performs a standard 'git blame' on the current state of the file.
 //
 // Parameters:
 //   - filePath: The path to the file to perform the blame on.
@@ -422,28 +465,38 @@ func scanFile(filePath string, regex *regexp.Regexp) []Finding {
 //
 // Returns:
 //   - string: The name of the author who last modified the line.
-//   - string: Reserved for the commit date (currently returns empty).
-func gitBlame(filePath string, line int) (string, string) {
-	// git blame -L <line>,<line> --porcelain <file>
-	cmd := exec.Command("git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", filePath)
+//   - string: The date associated with the last modification (if available).
+func fallbackBlame(filePath string, line int) (string, string) {
+	absPath, _ := filepath.Abs(filePath)
+	dir := filepath.Dir(absPath)
 
-	// CombinedOutput runs the command and returns its combined standard output and standard error. If the command fails, it returns an error.
+	// Run 'git blame' on the specified line of the file,
+	// using the --porcelain option to get detailed information about the commit that last modified that line.
+	cmd := exec.Command("git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", filepath.Base(absPath))
+	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", ""
+		return "Unknown", ""
 	}
 
-	// The output of 'git blame --porcelain' contains multiple lines of metadata. We need to parse it to find the author and date.
 	lines := strings.Split(string(output), "\n")
-	author := ""
+	author := "Unknown"
+	date := ""
 
-	// The 'author' line in the output looks like: "author John Doe". We can extract the author's name by looking for this line.
+	// The porcelain output includes lines that start with "author " and "author-time "
+	// which we can parse to get the author's name and the timestamp of the last modification.
 	for _, line := range lines {
 		if strings.HasPrefix(line, "author ") {
 			author = strings.TrimPrefix(line, "author ")
-			break
+		}
+		if strings.HasPrefix(line, "author-time ") {
+			// Basic conversion or skip for now if complex, but porcelain gives us data
+			timestamp := strings.TrimPrefix(line, "author-time ")
+			// Convert the timestamp to a human-readable date format (YYYY-MM-DD)
+			if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
+				date = time.Unix(ts, 0).Format("2006-01-02")
+			}
 		}
 	}
-
-	return author, ""
+	return author, date
 }
