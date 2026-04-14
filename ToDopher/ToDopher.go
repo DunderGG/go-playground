@@ -33,6 +33,13 @@ import (
 	"sync"
 )
 
+const (
+	// DefaultTemplatePath is the source HTML file used to generate the report.
+	DefaultTemplatePath = "template.html"
+	// DefaultOutputPath is the filename for the generated technical debt report.
+	DefaultOutputPath = "report.html"
+)
+
 // Config holds the scanner settings
 type Config struct {
 	SearchTags        []string
@@ -75,6 +82,16 @@ func main() {
 		return
 	}
 
+	// Filter out the report file itself and the template to avoid self-scanning
+	var filteredFiles []string
+	for _, f := range filesToScan {
+		base := filepath.Base(f)
+		if base != DefaultOutputPath && base != DefaultTemplatePath {
+			filteredFiles = append(filteredFiles, f)
+		}
+	}
+	filesToScan = filteredFiles
+
 	fmt.Printf("Found %d files to scan. Commencing concurrent audit...\n", len(filesToScan))
 
 	// Step 3 & 4: Concurrent Scanning Engine with Regex Matcher
@@ -87,16 +104,16 @@ func main() {
 	fmt.Printf("\nAudit complete! Total findings across all files: %d\n", len(findings))
 
 	// Step 5: Generate static HTML report
-	err = generateHtmlReport(findings, "report.html")
+	err = generateHtmlReport(findings, DefaultOutputPath)
 	if err != nil {
 		fmt.Printf("Error generating report: %v\n", err)
 		return
 	}
 
-	if absPath, err := filepath.Abs("report.html"); err == nil {
+	if absPath, err := filepath.Abs(DefaultOutputPath); err == nil {
 		fmt.Printf("📊 Report generated successfully at:\n %s\n", absPath)
 	} else {
-		fmt.Println("📊 Report generated successfully at:\n report.html")
+		fmt.Println("📊 Report generated successfully at:\n " + DefaultOutputPath)
 	}
 }
 
@@ -123,7 +140,7 @@ func generateHtmlReport(findings []Finding, outputPath string) error {
 	}
 
 	// Read and parse the template file
-	tmpl, err := template.ParseFiles("template.html")
+	tmpl, err := template.ParseFiles(DefaultTemplatePath)
 	if err != nil {
 		return fmt.Errorf("failed to parse template file: %w", err)
 	}

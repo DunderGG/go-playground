@@ -87,6 +87,11 @@
         .tag-bug { background-color: #f85149; }
         .tag-default { background-color: #6e7681; }
 
+        /* Row Highlighting based on Tag */
+        table.dataTable tbody tr.priority-high { border-left: 4px solid #da3633 !important; }
+        table.dataTable tbody tr.priority-med { border-left: 4px solid #d29922 !important; }
+        table.dataTable tbody tr.priority-low { border-left: 4px solid #238636 !important; }
+
         .footer { margin-top: 2rem; text-align: center; color: var(--footer-color); font-size: 0.9rem; }
 
         .filter-row {
@@ -116,6 +121,11 @@
         table.dataTable thead th { border-bottom: 1px solid var(--border-color) !important; color: var(--heading-color); }
         table.dataTable tbody tr { background-color: var(--container-bg) !important; }
         table.dataTable tbody tr:hover { background-color: var(--table-hover) !important; }
+        table.dataTable td { 
+            max-width: 500px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
         .dataTables_wrapper .dataTables_length, .dataTables_wrapper .dataTables_filter, 
         .dataTables_wrapper .dataTables_info, .dataTables_wrapper .dataTables_processing, 
         .dataTables_wrapper .dataTables_paginate { color: var(--text-color) !important; }
@@ -142,7 +152,10 @@
             margin-top: 8px;
             border-left: 3px solid #30363d;
             white-space: pre-wrap;
+            word-break: break-all;
+            overflow-x: auto;
             color: #8b949e;
+            max-width: 100%;
         }
         body.light-mode .context-code {
             background: #f6f8fa;
@@ -313,7 +326,17 @@
                         }
                     }
                 ],
-                order: [[0, 'asc']]
+                order: [[0, 'asc']],
+                createdRow: function(row, data, dataIndex) {
+                    const tag = data.tag.toUpperCase();
+                    if (tag === 'FIXME' || tag === 'BUG') {
+                        $(row).addClass('priority-high');
+                    } else if (tag === 'HACK' || tag === 'REWORK') {
+                        $(row).addClass('priority-med');
+                    } else if (tag === 'TODO') {
+                        $(row).addClass('priority-low');
+                    }
+                }
             });
 
             // Filter logic
