@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ToDopher Report</title>
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
             --bg-color: #0d1117;
@@ -14,6 +15,7 @@
             --heading-color: #f0f6fc;
             --footer-color: #8b949e;
             --table-hover: #21262d;
+            --chart-bg: #161b22;
         }
 
         body.light-mode {
@@ -24,6 +26,7 @@
             --heading-color: #24292f;
             --footer-color: #6e7781;
             --table-hover: #f6f8fa;
+            --chart-bg: #ffffff;
         }
 
         body { 
@@ -51,7 +54,31 @@
             margin-bottom: 2rem;
         }
 
-        h1 { color: var(--heading-color); display: flex; align-items: center; gap: 10px; margin: 0; }
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .app-icon {
+            width: 64px;
+            height: 64px;
+            object-fit: contain;
+        }
+
+        h1 { color: var(--heading-color); margin: 0; }
+
+        .chart-container {
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            background: var(--container-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            max-width: 600px;
+            height: 300px;
+            display: flex;
+            justify-content: center;
+        }
 
         .tag { padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; color: white; display: inline-block; }
         .tag-todo { background-color: #238636; }
@@ -61,6 +88,28 @@
         .tag-default { background-color: #6e7681; }
 
         .footer { margin-top: 2rem; text-align: center; color: var(--footer-color); font-size: 0.9rem; }
+
+        .filter-row {
+            margin-bottom: 1.5rem;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        select {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 5px 10px;
+            font-size: 0.9rem;
+        }
 
         /* DataTables Dark Mode Overrides */
         table.dataTable { color: var(--text-color) !important; border-bottom: 1px solid var(--border-color) !important; }
@@ -82,20 +131,61 @@
         .slider:before { background-color: #fff; bottom: 4px; content: ""; height: 16px; left: 4px; position: absolute; transition: .4s; width: 16px; border-radius: 50%; }
         input:checked + .slider { background-color: #238636; }
         input:checked + .slider:before { transform: translateX(26px); }
+
+        /* Context Code Style */
+        .context-code {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 0.85rem;
+            background: #0d1117;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 8px;
+            border-left: 3px solid #30363d;
+            white-space: pre-wrap;
+            color: #8b949e;
+        }
+        body.light-mode .context-code {
+            background: #f6f8fa;
+            border-left: 3px solid #d0d7de;
+            color: #57606a;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header-row">
-            <h1>📝 ToDopher Debt Report</h1>
+            <div class="header-title">
+                <img src="appicon.png" alt="ToDopher Icon" class="app-icon" onerror="this.style.display='none'">
+                <h1>ToDopher Debt Report</h1>
+            </div>
             <div class="theme-switch-wrapper">
-                <span>Light Mode</span>
+                <span>Turn the lights on</span>
                 <label class="theme-switch" for="checkbox">
                     <input type="checkbox" id="checkbox" />
                     <div class="slider"></div>
                 </label>
             </div>
         </div>
+
+        <div class="chart-container">
+            <canvas id="tagChart"></canvas>
+        </div>
+
+        <div class="filter-row">
+            <div class="filter-group">
+                <label for="authorFilter">Filter by Author:</label>
+                <select id="authorFilter">
+                    <option value="">All Authors</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="tagFilter">Filter by Tag:</label>
+                <select id="tagFilter">
+                    <option value="">All Tags</option>
+                </select>
+            </div>
+        </div>
+
         <table id="todosTable" class="display" style="width:100%">
             <thead>
                 <tr>
@@ -103,6 +193,7 @@
                     <th>Author</th>
                     <th>File</th>
                     <th>Line</th>
+                    <th>When</th>
                     <th>Content</th>
                 </tr>
             </thead>
@@ -127,7 +218,77 @@
         toggleSwitch.addEventListener('change', switchTheme, false);
 
         $(document).ready(function() {
-            $('#todosTable').DataTable({
+            // Extract unique authors and tags for filters
+            const authors = [...new Set(findings.map(f => f.author))].filter(a => a).sort();
+            const tags = [...new Set(findings.map(f => f.tag))].sort();
+
+            const authorFilter = $('#authorFilter');
+            const tagFilter = $('#tagFilter');
+
+            authors.forEach(author => {
+                authorFilter.append(`<option value="${author}">${author}</option>`);
+            });
+
+            tags.forEach(tag => {
+                tagFilter.append(`<option value="${tag}">${tag}</option>`);
+            });
+
+            // Prepare Chart Data
+            const tagCounts = {};
+            findings.forEach(f => {
+                tagCounts[f.tag] = (tagCounts[f.tag] || 0) + 1;
+            });
+
+            const chartLabels = Object.keys(tagCounts);
+            const chartData = Object.values(tagCounts);
+            const tagColors = {
+                'TODO': '#238636',
+                'FIXME': '#da3633',
+                'HACK': '#d29922',
+                'BUG': '#f85149',
+                'SUGGESTION': '#0969da',
+                'IDEA': '#db61ad',
+                'REWORK': '#8250df'
+            };
+            const backgroundColors = chartLabels.map(label => tagColors[label] || '#6e7681');
+
+            const ctx = document.getElementById('tagChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: chartLabels,
+                    datasets: [{
+                        label: 'Finding Distribution',
+                        data: chartData,
+                        backgroundColor: backgroundColors,
+                        borderColor: '#161b22',
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { 
+                            display: true,
+                            position: 'right',
+                            labels: {
+                                color: '#c9d1d9',
+                                padding: 20,
+                                font: { size: 12 }
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Technical Debt Distribution',
+                            color: '#c9d1d9',
+                            font: { size: 16 }
+                        }
+                    }
+                }
+            });
+
+            const table = $('#todosTable').DataTable({
                 data: findings,
                 columns: [
                     { 
@@ -137,12 +298,31 @@
                             return '<span class="tag ' + cls + '">' + data + '</span>';
                         }
                     },
-                    { data: 'author' },
+                    { data: 'author', defaultContent: '-' },
                     { data: 'file' },
                     { data: 'line' },
-                    { data: 'content' }
+                    { data: 'when', defaultContent: '-' },
+                    { 
+                        data: 'content',
+                        render: function(data, type, row) {
+                            let html = `<strong>${data}</strong>`;
+                            if (row.context && row.context.length > 0) {
+                                html += `<div class="context-code">${row.context.join('\n')}</div>`;
+                            }
+                            return html;
+                        }
+                    }
                 ],
                 order: [[0, 'asc']]
+            });
+
+            // Filter logic
+            $('#authorFilter').on('change', function() {
+                table.column(1).search(this.value).draw();
+            });
+
+            $('#tagFilter').on('change', function() {
+                table.column(0).search(this.value).draw();
             });
         });
     </script>

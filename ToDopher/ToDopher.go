@@ -1,8 +1,6 @@
 // ToDopher is a lightning-fast source code auditor that extracts "TODO",
 // "FIXME", and "HACK" comments from your Unreal Engine project.
 //
-// ToDo + Gopher = ToDopher. Get it? It's a pun. You're welcome...
-//
 // It provides a centralized dashboard to track technical debt across multiple
 // modules, helping teams prioritize cleanup tasks without opening every file.
 //
@@ -24,11 +22,11 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -45,11 +43,13 @@ type Config struct {
 // Finding represents a single technical debt entry found in the source code.
 // The 'json:"file"' parts tell the JSON encoder how to name these fields when converting to JSON, which is useful for the API endpoint.
 type Finding struct {
-	File    string `json:"file"`
-	Line    int    `json:"line"`
-	Tag     string `json:"tag"`
-	Author  string `json:"author"`
-	Content string `json:"content"`
+	File    string   `json:"file"`
+	Line    int      `json:"line"`
+	Tag     string   `json:"tag"`
+	Author  string   `json:"author"`
+	Content string   `json:"content"`
+	Context []string `json:"context"`
+	When    string   `json:"when"`
 }
 
 func main() {
@@ -105,6 +105,7 @@ func main() {
 // Returns:
 //   - error: Any error encountered during file creation or template execution.
 func generateHtmlReport(findings []Finding, outputPath string) error {
+	// Convert findings to JSON for embedding in the template
 	jsonData, err := json.Marshal(findings)
 	if err != nil {
 		return fmt.Errorf("failed to marshal findings to JSON: %w", err)
@@ -253,7 +254,8 @@ func shouldScan(path string, config Config) bool {
 	return false
 }
 
-// scanFile reads a file line-by-line and identifies lines containing technical debt tags using regex.
+// scanFile reads a file and identifies lines containing technical debt tags.
+// It also captures 3 lines of following context for each finding.
 //
 // Parameters:
 //   - filePath: The path of the file to scan.
@@ -262,70 +264,87 @@ func shouldScan(path string, config Config) bool {
 // Returns:
 //   - []Finding: A slice of Finding structs discovered in this file.
 func scanFile(filePath string, regex *regexp.Regexp) []Finding {
-	file, err := os.Open(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
-		fmt.Printf("Error opening file %s: %v\n", filePath, err)
+		fmt.Printf("Error reading file %s: %v\n", filePath, err)
 		return nil
 	}
-	defer file.Close()
 
+	lines := strings.Split(string(content), "\n")
 	var findings []Finding
-	scanner := bufio.NewScanner(file)
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		// Read the current line of the file
-		line := scanner.Text()
-		// Use the precompiled regex to find matches in the current line.
+
+	for i, line := range lines {
 		matches := regex.FindStringSubmatch(line)
-		// If matches are found, create a Finding struct with the relevant information and add it to the findings slice.
 		if len(matches) > 0 {
+			lineNum := i + 1
+			// Determine context (up to 3 lines after the tag)
+			var contextLines []string
+			for j := 1; j <= 3 && i+j < len(lines); j++ {
+				// TrimRight is used to remove any trailing newline characters from the context lines, ensuring cleaner output in the report.
+				contextLines = append(contextLines, strings.TrimRight(lines[i+j], "\r"))
+			}
+
+			author := matches[2]
+			when := ""
+
+			// If no author extracted from tag, try git blame
+			if author == "" {
+				blameAuthor, blameDate := gitBlame(filePath, lineNum)
+				if blameAuthor != "" {
+					author = blameAuthor
+				}
+				when = blameDate
+			}
+
 			finding := Finding{
-				File: filePath,
-				Line: lineNum,
-				// matches[1] contains the tag (e.g., TODO),
-				// matches[2] contains the optional author (e.g., Dunder), and
-				// matches[3] contains the content of the comment.
+				File:    filePath,
+				Line:    lineNum,
 				Tag:     strings.ToUpper(matches[1]),
-				Author:  matches[2],
+				Author:  author,
 				Content: strings.TrimSpace(matches[3]),
+				Context: contextLines,
+				When:    when,
 			}
 			findings = append(findings, finding)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		fmt.Printf("Error reading file %s: %v\n", filePath, err)
-		return nil
-	}
 	return findings
 }
 
-/*
-   DETAILED IMPLEMENTATION PLAN
-   ----------------------------
+// gitBlame uses the 'git blame' command to identify the author of a specific line in a file.
+// It leverages the --porcelain flag to parse machine-readable metadata from the Git history.
+//
+// TODO We should show who was the first author to add the line with a TODO, not the last one.
+// We can use "git log -L <line>,<line>:<file>" for that, but it is more complex to parse.
+//
+// Parameters:
+//   - filePath: The path to the file to perform the blame on.
+//   - line: The specific line number to investigate.
+//
+// Returns:
+//   - string: The name of the author who last modified the line.
+//   - string: Reserved for the commit date (currently returns empty).
+func gitBlame(filePath string, line int) (string, string) {
+	// git blame -L <line>,<line> --porcelain <file>
+	cmd := exec.Command("git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", filePath)
 
-   1. SEARCH PATTERNS & CONFIG
-      - Support common formats: "TODO", "FIXME", "HACK", "BUG".
-      - Support personalized tags: "TODO-Dunder", "TODO-TeamName".
-      - Support informational tags: "SUGGESTION", "IDEA", "QUESTION", "REWORK".
-      - Use a slice of strings `searchTags` to allow the user to add more via CLI.
+	// CombinedOutput runs the command and returns its combined standard output and standard error. If the command fails, it returns an error.
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", ""
+	}
 
-   2. PROJECT DISCOVERY & FILTERS
-      - Walk "Source/", "Plugins/", and "Config/" directories.
-      - Implement an "Ignore List" for "Intermediate/", "ThirdParty/", and ".git/".
-      - Filter by extension (.h, .cpp, .cs, .py, .ini).
+	// The output of 'git blame --porcelain' contains multiple lines of metadata. We need to parse it to find the author and date.
+	lines := strings.Split(string(output), "\n")
+	author := ""
 
-   3. CONCURRENT SCANNING ENGINE
-      - Use a `sync.WaitGroup` and a channel of `string` (file paths).
-      - Spawn 10-20 workers to read files concurrently.
-      - Use `bufio.Scanner` to read files line-by-line for low memory footprint.
+	// The 'author' line in the output looks like: "author John Doe". We can extract the author's name by looking for this line.
+	for _, line := range lines {
+		if strings.HasPrefix(line, "author ") {
+			author = strings.TrimPrefix(line, "author ")
+			break
+		}
+	}
 
-   4. REGEX MATCHER
-      - Use a case-insensitive regex: `(?i)(TODO|FIXME|HACK|BUG|SUGGESTION|IDEA|REWORK)(-[A-Z]+)?:\s*(.*)`.
-      - For every match, store: { File, LineNum, Content, Type, Author (optional) }.
-
-   5. DASHBOARD (WEB UI)
-      - Use `net/http` to serve a simple HTML/JS frontend.
-      - Send results via a single JSON endpoint `/api/todos`.
-      - Use a JS data table (like DataTables.net) for instant sorting and filtering.
-*/
+	return author, ""
+}
