@@ -20,7 +20,7 @@
 ### How to Run
 The easiest way to run **ToDopher** is using the `go run` command:
 ```powershell
-go run ToDopher.go "C:\Path\To\Your\UnrealProject"
+go run ToDopher.go "C:\Path\To\Your\Project"
 ```
 If no path is provided, it defaults to scanning the current directory.
 
@@ -34,7 +34,7 @@ go build -o ToDopher.exe ToDopher.go
 Run ToDopher from the command line, providing an optional path to scan. 
 
 ```powershell
-./ToDopher.exe "C:\Path\To\Your\UnrealProject"
+./ToDopher.exe "C:\Path\To\Your\Project"
 ```
 
 ### Command Line Options
@@ -64,8 +64,8 @@ Currently, ToDopher is configured via the `Config` struct in [ToDopher.go](ToDop
 ## 📜 Roadmap
 - [x] **Git Blame Integration**: Automatically fetch the author and date of each TODO from Git history.
 - [x] **Context Lines**: Capture 2-3 lines of surrounding code for better auditing.
-- [ ] **JSON/Markdown Export**: For integration with CI/CD pipelines.
-- [ ] **Custom Config**: For more tags, extensions and ignore folders.
+- [X] **JSON/Markdown Export**: For integration with CI/CD pipelines.
+- [X] **Custom Config**: For more tags, extensions and ignore folders.
 - [ ] **GUI**: For easier usage.
 
 ## 🛠️ Built With
