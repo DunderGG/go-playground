@@ -53,6 +53,8 @@ var (
 	OutputPath string
 	// CustomTags is a comma-separated list of search tags
 	CustomTags string
+	// CustomExtensions is a comma-separated list of file extensions
+	CustomExtensions string
 )
 
 // Config holds the scanner settings
@@ -85,6 +87,9 @@ func main() {
 	// The -t or --tags flag allows the user to append custom search tags (e.g., -t "SECURITY,IMPORTANT").
 	flag.StringVar(&CustomTags, "t", "", "Comma-separated list of additional search tags")
 	flag.StringVar(&CustomTags, "tags", "", "Comma-separated list of additional search tags")
+	// The -e or --exts flag allows the user to append additional file extensions (e.g., -e ".js,.ts").
+	flag.StringVar(&CustomExtensions, "e", "", "Comma-separated list of additional file extensions")
+	flag.StringVar(&CustomExtensions, "exts", "", "Comma-separated list of additional file extensions")
 	flag.Parse()
 
 	// Initialize configuration with default search tags, ignored folders, and allowed extensions
@@ -101,6 +106,21 @@ func main() {
 			trimmed := strings.TrimSpace(tag)
 			if trimmed != "" {
 				config.SearchTags = append(config.SearchTags, trimmed)
+			}
+		}
+	}
+
+	// Append custom extensions if provided via CLI
+	if CustomExtensions != "" {
+		exts := strings.Split(CustomExtensions, ",")
+		for _, ext := range exts {
+			trimmed := strings.TrimSpace(ext)
+			if trimmed != "" {
+				// Ensure it starts with a dot
+				if !strings.HasPrefix(trimmed, ".") {
+					trimmed = "." + trimmed
+				}
+				config.AllowedExtensions = append(config.AllowedExtensions, trimmed)
 			}
 		}
 	}
