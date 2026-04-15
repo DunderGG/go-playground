@@ -1,6 +1,0 @@
-# Ignore the generated report file
-report.html
-
-# Only include the app icon, ignore all other PNG files
-*.png
-!appicon.png
