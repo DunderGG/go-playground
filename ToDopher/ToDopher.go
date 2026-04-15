@@ -62,6 +62,8 @@ var (
 	CustomTags string
 	// CustomExtensions is a comma-separated list of file extensions
 	CustomExtensions string
+	// CustomIgnore is a comma-separated list of folders to ignore
+	CustomIgnore string
 	// JsonPath is the destination for the JSON export
 	JsonPath string
 )
@@ -136,6 +138,9 @@ func parseFlags() {
 	// The -e or --exts flag allows the user to append additional file extensions (e.g., -e ".js,.ts").
 	flag.StringVar(&CustomExtensions, "e", "", "Comma-separated list of additional file extensions")
 	flag.StringVar(&CustomExtensions, "exts", "", "Comma-separated list of additional file extensions")
+	// The -i or --ignore flag allows the user to append additional folders to ignore (e.g., -i "node_modules,dist").
+	flag.StringVar(&CustomIgnore, "i", "", "Comma-separated list of additional folders to ignore")
+	flag.StringVar(&CustomIgnore, "ignore", "", "Comma-separated list of additional folders to ignore")
 	// The -j or --json flag allows the user to specify a path for a JSON export of the findings.
 	flag.StringVar(&JsonPath, "j", "", "Optional path to export findings as a JSON file")
 	flag.StringVar(&JsonPath, "json", "", "Optional path to export findings as a JSON file")
@@ -174,6 +179,17 @@ func initializeConfig() Config {
 					trimmed = "." + trimmed
 				}
 				config.AllowedExtensions = append(config.AllowedExtensions, trimmed)
+			}
+		}
+	}
+
+	// Append custom ignore folders if provided via CLI
+	if CustomIgnore != "" {
+		folders := strings.Split(CustomIgnore, ",")
+		for _, folder := range folders {
+			trimmed := strings.TrimSpace(folder)
+			if trimmed != "" {
+				config.IgnoreFolders = append(config.IgnoreFolders, trimmed)
 			}
 		}
 	}
