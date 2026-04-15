@@ -126,6 +126,28 @@ func main() {
 
 // parseFlags defines and parses command-line flags for customizing the tool's behavior.
 func parseFlags() {
+	// Custom usage message
+	flag.Usage = func() {
+		printIntro()
+		fmt.Println("Usage: ToDopher [options] [search_directory]")
+		fmt.Println("\nToDopher is a high-speed technical debt scanner that extracts TODOs from source code.")
+		fmt.Println("\nOptions:")
+		fmt.Println("  -e, --exts string    Comma-separated list of additional file extensions")
+		fmt.Println("  -h, --help           Show this help message")
+		fmt.Println("  -i, --ignore string  Comma-separated list of additional folders to ignore")
+		fmt.Println("  -j, --json string    Optional path to export findings as a JSON file")
+		fmt.Println("  -o, --output string  Output filename for the report (default \"report.html\")")
+		fmt.Println("  -q, --quiet          Quiet mode (suppress output)")
+		fmt.Println("  -t, --tags string    Comma-separated list of additional search tags")
+
+		fmt.Println("\nExamples:")
+		fmt.Println("   ToDopher .                               # Scan current directory")
+		fmt.Println("   ToDopher -q 	                            # Quiet mode")
+		fmt.Println("   ToDopher -o \"report.html\" -j \"data.json\" # Custom outputs")
+		fmt.Println("   ToDopher -t \"BUG,URGENT\" -e \".js,.ts\"    # Custom tags and extensions")
+		fmt.Println("   ToDopher -i \"node_modules,dist\"          # Custom ignore folders")
+	}
+
 	// The -q or --quiet flag enables quiet mode, which suppresses non-essential output for a cleaner experience when the user just wants the report.
 	flag.BoolVar(&IsQuiet, "q", false, "Quiet mode (suppress output)")
 	flag.BoolVar(&IsQuiet, "quiet", false, "Quiet mode (suppress output)")
