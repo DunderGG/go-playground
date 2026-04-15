@@ -85,6 +85,7 @@ type Finding struct {
 	Content string   `json:"content"`
 	Context []string `json:"context"`
 	When    string   `json:"when"`
+	Status  string   `json:"status"` // "Fresh", "Stale", or "Ancient"
 }
 
 func main() {
@@ -487,6 +488,19 @@ func scanFile(filePath string, regex *regexp.Regexp) []Finding {
 				when = blameDate
 			}
 
+			// Calculate Status based on age
+			status := "Fresh"
+			if when != "" {
+				if commitTime, err := time.Parse("2006-01-02", when); err == nil {
+					daysOld := time.Since(commitTime).Hours() / 24
+					if daysOld > 180 {
+						status = "Ancient"
+					} else if daysOld > 30 {
+						status = "Stale"
+					}
+				}
+			}
+
 			finding := Finding{
 				File:    filePath,
 				Line:    lineNum,
@@ -495,6 +509,7 @@ func scanFile(filePath string, regex *regexp.Regexp) []Finding {
 				Content: strings.TrimSpace(matches[3]),
 				Context: contextLines,
 				When:    when,
+				Status:  status,
 			}
 			findings = append(findings, finding)
 		}
@@ -680,7 +695,7 @@ func printIntro() {
    ______ ___  ____  ____  ____  __ __  ______ ____
   /_  __/ __ \/ __ \/ __ \/ __ \/ // / / ____/ __  \
    / / / / / / / / / / / / /_/ / _  / / __/ / /_/  /
-  / / / /_/ / /_/ / /_/ / ____/ / // / /___/__/ ,_/ 
+  / / / /_/ / /_/ / /_/ / ____/ // / / /___/__/ ,_/ 
  /_/  \____/_____/\____/_/   /_//_/ /_____/_/ |_|
 `
 	fmt.Println(intro)
