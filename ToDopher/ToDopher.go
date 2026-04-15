@@ -79,7 +79,44 @@ type Finding struct {
 }
 
 func main() {
-	// Parse command-line flags.
+	parseFlags()
+	config := initializeConfig()
+
+	if !IsQuiet {
+		printIntro()
+	}
+
+	// Get search directory from arguments, default to current directory
+	searchDir := "."
+	if args := flag.Args(); len(args) > 0 {
+		searchDir = args[0]
+	}
+
+	// Walk the project directory and collect files to scan
+	filesToScan, err := discoverFiles(searchDir, config)
+	if err != nil {
+		fmt.Printf("Error walking the path: %v\n", err)
+		return
+	}
+
+	filesToScan = filterOutputFiles(filesToScan)
+
+	if !IsQuiet {
+		fmt.Printf("Found %d files to scan. Commencing concurrent audit...\n", len(filesToScan))
+	}
+
+	// Concurrent Scanning Engine with Regex Matcher
+	findings := startWorkerPool(filesToScan, config)
+
+	if !IsQuiet {
+		fmt.Printf("\nAudit complete! Total findings across all files: %d\n", len(findings))
+	}
+
+	generateReports(findings)
+}
+
+// parseFlags defines and parses command-line flags for customizing the tool's behavior.
+func parseFlags() {
 	// The -q or --quiet flag enables quiet mode, which suppresses non-essential output for a cleaner experience when the user just wants the report.
 	flag.BoolVar(&IsQuiet, "q", false, "Quiet mode (suppress output)")
 	flag.BoolVar(&IsQuiet, "quiet", false, "Quiet mode (suppress output)")
@@ -96,7 +133,10 @@ func main() {
 	flag.StringVar(&JsonPath, "j", "", "Optional path to export findings as a JSON file")
 	flag.StringVar(&JsonPath, "json", "", "Optional path to export findings as a JSON file")
 	flag.Parse()
+}
 
+// initializeConfig sets up the Config struct with default values and incorporates any custom tags or extensions provided via command-line flags.
+func initializeConfig() Config {
 	// Initialize configuration with default search tags, ignored folders, and allowed extensions
 	config := Config{
 		SearchTags:        []string{"TODO", "FIXME", "HACK", "BUG", "SUGGESTION", "IDEA", "REWORK"},
@@ -129,75 +169,32 @@ func main() {
 			}
 		}
 	}
+	return config
+}
 
-	if !IsQuiet {
-		printIntro()
-	}
-
-	// Get search directory from arguments, default to current directory
-	searchDir := "."
-	if args := flag.Args(); len(args) > 0 {
-		searchDir = args[0]
-	}
-
-	// Walk the project directory and collect files to scan
-	filesToScan, err := discoverFiles(searchDir, config)
-	if err != nil {
-		fmt.Printf("Error walking the path: %v\n", err)
-		return
-	}
-
+// filterOutputFiles removes the report file from the list of files to scan to prevent self-scanning.
+func filterOutputFiles(files []string) []string {
 	// Filter out the report file itself to avoid self-scanning
 	var filteredFiles []string
-	for _, f := range filesToScan {
-		base := filepath.Base(f)
+	for _, file := range files {
+		base := filepath.Base(file)
 		if base != OutputPath {
-			filteredFiles = append(filteredFiles, f)
+			filteredFiles = append(filteredFiles, file)
 		}
 	}
-	filesToScan = filteredFiles
+	return filteredFiles
+}
 
-	if !IsQuiet {
-		fmt.Printf("Found %d files to scan. Commencing concurrent audit...\n", len(filesToScan))
-	}
-
-	// Concurrent Scanning Engine with Regex Matcher
-	findings := startWorkerPool(filesToScan, config)
-
-	// Clear progress line before moving to the summary
-	// I think it actually looks better to keep the progress bar and just print the summary on a new line. This might change.
-	//fmt.Print("\r\033[K")
-
-	if !IsQuiet {
-		fmt.Printf("\nAudit complete! Total findings across all files: %d\n", len(findings))
-	}
-
+func generateReports(findings []Finding) {
 	// Generate static HTML report
-	err = generateHtmlReport(findings, OutputPath)
+	err := generateHtmlReport(findings, OutputPath)
 	if err != nil {
 		fmt.Printf("Error generating report: %v\n", err)
-		return
 	}
 
 	// Export to JSON if requested
 	if JsonPath != "" {
-		jsonData, err := json.MarshalIndent(findings, "", "  ")
-		if err != nil {
-			fmt.Printf("Error marshaling JSON: %v\n", err)
-		} else {
-			// WriteFile is a convenience function that writes data to a file, creating it if it doesn't exist or truncating it if it does.
-			// 0644 sets the file permissions to be readable and writable by the owner, and readable by others.
-			err = os.WriteFile(JsonPath, jsonData, 0644)
-			if err != nil {
-				fmt.Printf("Error writing JSON file: %v\n", err)
-			} else if !IsQuiet {
-				if absJson, err := filepath.Abs(JsonPath); err == nil {
-					fmt.Printf("📄 JSON data exported to:\n %s\n", absJson)
-				} else {
-					fmt.Printf("📄 JSON data exported to:\n %s\n", JsonPath)
-				}
-			}
-		}
+		exportToJson(findings)
 	}
 
 	if absPath, err := filepath.Abs(OutputPath); err == nil {
@@ -206,7 +203,28 @@ func main() {
 		}
 	} else {
 		if !IsQuiet {
- 			fmt.Println("📊 Report generated successfully at:\n " + OutputPath)
+			fmt.Println("📊 Report generated successfully at:\n " + OutputPath)
+		}
+	}
+}
+
+func exportToJson(findings []Finding) {
+	jsonData, err := json.MarshalIndent(findings, "", "  ")
+	if err != nil {
+		fmt.Printf("Error marshaling JSON: %v\n", err)
+		return
+	}
+
+	// WriteFile is a convenience function that writes data to a file, creating it if it doesn't exist or truncating it if it does.
+	// 0644 sets the file permissions to be readable and writable by the owner, and readable by others.
+	err = os.WriteFile(JsonPath, jsonData, 0644)
+	if err != nil {
+		fmt.Printf("Error writing JSON file: %v\n", err)
+	} else if !IsQuiet {
+		if absJson, err := filepath.Abs(JsonPath); err == nil {
+			fmt.Printf("📄 JSON data exported to:\n %s\n", absJson)
+		} else {
+			fmt.Printf("📄 JSON data exported to:\n %s\n", JsonPath)
 		}
 	}
 }
