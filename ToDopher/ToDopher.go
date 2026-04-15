@@ -44,6 +44,13 @@ var content embed.FS
 const (
 	// DefaultOutputPath is the filename for the generated technical debt report.
 	DefaultOutputPath = "report.html"
+	// TagRegexPattern is core regex for identifying technical debt tags.
+	// 		Prefix: Supports // (C++/Go), # (Python/Shell), /* (Block Start), or * (Block Middle)
+	// 		Group 1: Placeholder for search tags (e.g., TODO, FIXME)
+	//	 	Group 2: An optional author name following a hyphen (e.g., TODO-Dunder)
+	// 		Group 3: A colon followed by any amount of whitespace
+	// 		Group 4: The remaining text on the line as the description/content
+	TagRegexPattern = `(?i)(?://|#|/\*|\*)\s*(%s)(?:-([A-Z]+))?:\s*(.*)`
 )
 
 var (
@@ -135,7 +142,8 @@ func parseFlags() {
 	flag.Parse()
 }
 
-// initializeConfig sets up the Config struct with default values and incorporates any custom tags or extensions provided via command-line flags.
+// initializeConfig sets up and returns the Config struct with default values
+// and incorporates any custom tags or extensions provided via command-line flags.
 func initializeConfig() Config {
 	// Initialize configuration with default search tags, ignored folders, and allowed extensions
 	config := Config{
@@ -173,6 +181,12 @@ func initializeConfig() Config {
 }
 
 // filterOutputFiles removes the report file from the list of files to scan to prevent self-scanning.
+//
+// Parameters:
+//   - files: A slice of strings containing all discovered file paths.
+//
+// Returns:
+//   - []string: A filtered slice of file paths excluding the HTML and JSON output files.
 func filterOutputFiles(files []string) []string {
 	// Filter out the report file itself to avoid self-scanning
 	var filteredFiles []string
@@ -185,6 +199,11 @@ func filterOutputFiles(files []string) []string {
 	return filteredFiles
 }
 
+// generateReports coordinates the generation of all requested audit reports.
+// It handles both the visual HTML dashboard and the machine-readable JSON export.
+//
+// Parameters:
+//   - findings: A slice of Finding structs containing the audit results.
 func generateReports(findings []Finding) {
 	// Generate static HTML report
 	err := generateHtmlReport(findings, OutputPath)
@@ -208,6 +227,10 @@ func generateReports(findings []Finding) {
 	}
 }
 
+// exportToJson serializes the findings into a pretty-printed JSON file.
+//
+// Parameters:
+//   - findings: A slice of Finding structs to be exported.
 func exportToJson(findings []Finding) {
 	jsonData, err := json.MarshalIndent(findings, "", "  ")
 	if err != nil {
@@ -232,14 +255,14 @@ func exportToJson(findings []Finding) {
 // extractAssets copies the embedded assets/ folder to the local disk.
 // This is necessary because report.html references local files like assets/jquery.min.js.
 func extractAssets() error {
-	return fs.WalkDir(content, "assets", func(path string, d fs.DirEntry, err error) error {
+	return fs.WalkDir(content, "assets", func(path string, dir fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
 		// MkdirAll will create the directory if it doesn't exist, and do nothing if it already exists.
 		// 0755 allows the owner to read/write/execute and others to read/execute.
-		if d.IsDir() {
+		if dir.IsDir() {
 			return os.MkdirAll(path, 0755)
 		}
 
@@ -297,14 +320,8 @@ func startWorkerPool(filesToScan []string, config Config) []Finding {
 	results := make(chan []Finding, totalFiles)
 	var waitGroup sync.WaitGroup
 
-	// Compile the case-insensitive regex once for performance.
-	// This pattern searches for:
-	// 		Prefix: Supports // (C++/Go), # (Python/Shell), /* (Block Start), or * (Block Middle)
-	// 		Group 1: One of the search tags (e.g., TODO, FIXME)
-	//	 	Group 2: An optional author name following a hyphen (e.g., TODO-Dunder)
-	// 		Group 3: A colon followed by any amount of whitespace
-	// 		Group 4: The remaining text on the line as the description/content
-	pattern := fmt.Sprintf(`(?i)(?://|#|/\*|\*)\s*(%s)(?:-([A-Z]+))?:\s*(.*)`, strings.Join(config.SearchTags, "|"))
+	// Compile the case-insensitive regex once for performance using the global pattern.
+	pattern := fmt.Sprintf(TagRegexPattern, strings.Join(config.SearchTags, "|"))
 	regex := regexp.MustCompile(pattern)
 
 	// Spawn workerIndex goroutines
@@ -405,17 +422,21 @@ func scanFile(filePath string, regex *regexp.Regexp) []Finding {
 	lines := strings.Split(string(content), "\n")
 	var findings []Finding
 
-	for i, line := range lines {
+	for lineCounter, line := range lines {
 		matches := regex.FindStringSubmatch(line)
 		if len(matches) > 0 {
-			lineNum := i + 1
+			lineNum := lineCounter + 1
 			// Determine context (up to 3 lines after the tag)
 			var contextLines []string
-			for j := 1; j <= 3 && i+j < len(lines); j++ {
+			// The loop captures up to 3 lines of context following the line where the tag was found, ensuring we don't go out of bounds.
+			for contextCounter := 1; contextCounter <= 3 && lineCounter+contextCounter < len(lines); contextCounter++ {
 				// TrimRight is used to remove any trailing newline characters from the context lines, ensuring cleaner output in the report.
-				contextLines = append(contextLines, strings.TrimRight(lines[i+j], "\r"))
+				contextLines = append(contextLines, strings.TrimRight(lines[lineCounter+contextCounter], "\r"))
 			}
 
+			// matches[1] is the tag (e.g., TODO),
+			// matches[2] is the optional author, and
+			// matches[3] is the content after the tag.
 			author := matches[2]
 			when := ""
 
@@ -484,6 +505,8 @@ func gitBlame(filePath string, line int) (string, string) {
 		return parts[0], parts[1]
 	}
 
+	// If the output format is unexpected or if there was an error,
+	// we fall back to a standard git blame on the current state of the file.
 	return fallbackBlame(filePath, line)
 }
 
@@ -520,6 +543,7 @@ func fallbackBlame(filePath string, line int) (string, string) {
 		if strings.HasPrefix(line, "author ") {
 			author = strings.TrimPrefix(line, "author ")
 		}
+
 		if strings.HasPrefix(line, "author-time ") {
 			// Basic conversion or skip for now if complex, but porcelain gives us data
 			timestamp := strings.TrimPrefix(line, "author-time ")
@@ -544,7 +568,7 @@ func generateHtmlReport(findings []Finding, outputPath string) error {
 	// Convert findings to JSON for embedding in the template
 	jsonData, err := json.Marshal(findings)
 	if err != nil {
-		return fmt.Errorf("failed to marshal findings to JSON: %w", err)
+		return fmt.Errorf("Failed to marshal findings to JSON: %w", err)
 	}
 
 	// Prepare data for the template
@@ -557,26 +581,26 @@ func generateHtmlReport(findings []Finding, outputPath string) error {
 	// Read and parse the template from the embedded file system
 	tmpl, err := template.ParseFS(content, "assets/template.html")
 	if err != nil {
-		return fmt.Errorf("failed to parse embedded template: %w", err)
+		return fmt.Errorf("Failed to parse embedded template: %w", err)
 	}
 
 	// After generating the HTML, we also need to ensure the assets folder exists
 	// alongside the report.html on the user's machine so the dashboard can load them.
 	// This function extracts the embedded assets/ folder to the physical disk.
 	if err := extractAssets(); err != nil {
-		return fmt.Errorf("failed to extract assets: %w", err)
+		return fmt.Errorf("Failed to extract assets: %w", err)
 	}
 
 	// Create the output file
 	file, err := os.Create(outputPath)
 	if err != nil {
-		return fmt.Errorf("failed to create report file: %w", err)
+		return fmt.Errorf("Failed to create report file: %w", err)
 	}
 	defer file.Close()
 
 	// Execute the template and write to the file
 	if err := tmpl.Execute(file, data); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
+		return fmt.Errorf("Failed to execute template: %w", err)
 	}
 
 	return nil
@@ -610,6 +634,7 @@ func printProgressBar(current, total int) {
 	fmt.Printf("\rScanning: %s %d/%d (%d%%)", bar, current, total, int(percent*100))
 }
 
+// printIntro displays an ASCII art banner and introductory message when the tool is run in non-quiet mode.
 func printIntro() {
 	// Yes the ASCII art is a bit scuffed... deal with it.
 	fmt.Println("======================================================")
