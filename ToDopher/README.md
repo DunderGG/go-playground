@@ -45,6 +45,7 @@ Run ToDopher from the command line, providing an optional path to scan.
 | `--output` | `-o` | Custom **file path** for the generated HTML report (defaults to `report.html`). Supports absolute or relative paths. |
 | `--tags` | `-t` | Comma-separated list of additional tags to search for (e.g., `IMPORTANT,SECURITY`). |
 | `--exts` | `-e` | Comma-separated list of additional file extensions to scan (e.g., `.js,.ts`). |
+| `--json` | `-j` | Optional path to export findings as a machine-readable JSON file. |
 
 ## 📊 The Report
 After running the audit, ToDopher generates a `report.html` file in the project folder. 

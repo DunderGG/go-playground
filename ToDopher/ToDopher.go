@@ -55,6 +55,8 @@ var (
 	CustomTags string
 	// CustomExtensions is a comma-separated list of file extensions
 	CustomExtensions string
+	// JsonPath is the destination for the JSON export
+	JsonPath string
 )
 
 // Config holds the scanner settings
@@ -90,6 +92,9 @@ func main() {
 	// The -e or --exts flag allows the user to append additional file extensions (e.g., -e ".js,.ts").
 	flag.StringVar(&CustomExtensions, "e", "", "Comma-separated list of additional file extensions")
 	flag.StringVar(&CustomExtensions, "exts", "", "Comma-separated list of additional file extensions")
+	// The -j or --json flag allows the user to specify a path for a JSON export of the findings.
+	flag.StringVar(&JsonPath, "j", "", "Optional path to export findings as a JSON file")
+	flag.StringVar(&JsonPath, "json", "", "Optional path to export findings as a JSON file")
 	flag.Parse()
 
 	// Initialize configuration with default search tags, ignored folders, and allowed extensions
@@ -172,6 +177,27 @@ func main() {
 	if err != nil {
 		fmt.Printf("Error generating report: %v\n", err)
 		return
+	}
+
+	// Export to JSON if requested
+	if JsonPath != "" {
+		jsonData, err := json.MarshalIndent(findings, "", "  ")
+		if err != nil {
+			fmt.Printf("Error marshaling JSON: %v\n", err)
+		} else {
+			// WriteFile is a convenience function that writes data to a file, creating it if it doesn't exist or truncating it if it does.
+			// 0644 sets the file permissions to be readable and writable by the owner, and readable by others.
+			err = os.WriteFile(JsonPath, jsonData, 0644)
+			if err != nil {
+				fmt.Printf("Error writing JSON file: %v\n", err)
+			} else if !IsQuiet {
+				if absJson, err := filepath.Abs(JsonPath); err == nil {
+					fmt.Printf("📄 JSON data exported to:\n %s\n", absJson)
+				} else {
+					fmt.Printf("📄 JSON data exported to:\n %s\n", JsonPath)
+				}
+			}
+		}
 	}
 
 	if absPath, err := filepath.Abs(OutputPath); err == nil {
