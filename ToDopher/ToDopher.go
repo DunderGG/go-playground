@@ -49,6 +49,8 @@ const (
 var (
 	// IsQuiet mode flag for suppressing non-essential output
 	IsQuiet bool
+	// OutputPath is the destination for the HTML report
+	OutputPath string
 )
 
 // Config holds the scanner settings
@@ -71,9 +73,13 @@ type Finding struct {
 }
 
 func main() {
-	// Parse command-line flags for quiet mode. This lets us suppress output if we only want the report file generated without console logs.
+	// Parse command-line flags.
+	// The -q or --quiet flag enables quiet mode, which suppresses non-essential output for a cleaner experience when the user just wants the report.
 	flag.BoolVar(&IsQuiet, "q", false, "Quiet mode (suppress output)")
 	flag.BoolVar(&IsQuiet, "quiet", false, "Quiet mode (suppress output)")
+	// The -o or --output flag allows the user to specify a custom file path for the generated report, defaulting to "report.html" if not provided.
+	flag.StringVar(&OutputPath, "o", DefaultOutputPath, "Output filename for the report")
+	flag.StringVar(&OutputPath, "output", DefaultOutputPath, "Output filename for the report")
 	flag.Parse()
 
 	// Step 1: Initialize configuration with default search tags, ignored folders, and allowed extensions
@@ -104,7 +110,7 @@ func main() {
 	var filteredFiles []string
 	for _, f := range filesToScan {
 		base := filepath.Base(f)
-		if base != DefaultOutputPath {
+		if base != OutputPath {
 			filteredFiles = append(filteredFiles, f)
 		}
 	}
@@ -126,19 +132,19 @@ func main() {
 	}
 
 	// Generate static HTML report
-	err = generateHtmlReport(findings, DefaultOutputPath)
+	err = generateHtmlReport(findings, OutputPath)
 	if err != nil {
 		fmt.Printf("Error generating report: %v\n", err)
 		return
 	}
 
-	if absPath, err := filepath.Abs(DefaultOutputPath); err == nil {
+	if absPath, err := filepath.Abs(OutputPath); err == nil {
 		if !IsQuiet {
 			fmt.Printf("📊 Report generated successfully at:\n %s\n", absPath)
 		}
 	} else {
 		if !IsQuiet {
-			fmt.Println("📊 Report generated successfully at:\n " + DefaultOutputPath)
+ 			fmt.Println("📊 Report generated successfully at:\n " + OutputPath)
 		}
 	}
 }

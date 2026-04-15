@@ -42,6 +42,7 @@ Run ToDopher from the command line, providing an optional path to scan.
 | Flag | Shorthand | Description |
 | :--- | :--- | :--- |
 | `--quiet` | `-q` | Quiet mode. Suppresses the ASCII intro, progress bar, and status messages. Useful for CI/CD. |
+| `--output` | `-o` | Custom **file path** for the generated HTML report (defaults to `report.html`). Supports absolute or relative paths. |
 
 ## 📊 The Report
 After running the audit, ToDopher generates a `report.html` file in the project folder. 
