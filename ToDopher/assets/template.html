@@ -202,14 +202,36 @@
         .dataTables_wrapper .dataTables_paginate .paginate_button.current { background: var(--border-color) !important; border: 1px solid var(--border-color) !important; color: var(--heading-color) !important; }
         .dataTables_wrapper .dataTables_filter input { background-color: var(--bg-color); color: var(--text-color); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px; }
 
-        /* Toggle Switch */
-        .theme-switch-wrapper { display: flex; align-items: center; gap: 10px; }
-        .theme-switch { display: inline-block; height: 24px; position: relative; width: 50px; }
-        .theme-switch input { display: none; }
-        .slider { background-color: #ccc; bottom: 0; cursor: pointer; left: 0; position: absolute; right: 0; top: 0; transition: .4s; border-radius: 34px; }
-        .slider:before { background-color: #fff; bottom: 4px; content: ""; height: 16px; left: 4px; position: absolute; transition: .4s; width: 16px; border-radius: 50%; }
-        input:checked + .slider { background-color: #238636; }
-        input:checked + .slider:before { transform: translateX(26px); }
+        /* Lamp Toggle */
+        .lamp-toggle {
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            user-select: none;
+            position: relative;
+            padding: 10px;
+        }
+        .lamp-toggle input { display: none; }
+        .lamp-icon {
+            font-size: 2.5rem;
+            transition: transform 0.2s, filter 0.3s;
+            filter: grayscale(1) opacity(0.5);
+        }
+        .lamp-toggle:hover .lamp-icon {
+            transform: scale(1.1);
+        }
+        input:checked + .lamp-icon {
+            filter: grayscale(0) opacity(1) drop-shadow(0 0 15px #ffd700);
+            transform: scale(1.1);
+        }
+        .lamp-label {
+            font-size: 0.75rem;
+            margin-top: 5px;
+            font-weight: bold;
+            color: var(--footer-color);
+            text-transform: uppercase;
+        }
 
         /* Context Code Style */
         .context-code {
@@ -278,13 +300,11 @@
                 <img src="assets/appicon.png" alt="ToDopher Icon" class="app-icon" id="app-icon" style="display: none;">
                 <h1>ToDopher Debt Report</h1>
             </div>
-            <div class="theme-switch-wrapper">
-                <span id="theme-text">Turn the lights ON</span>
-                <label class="theme-switch" for="checkbox">
-                    <input type="checkbox" id="checkbox" />
-                    <div class="slider"></div>
-                </label>
-            </div>
+            <label class="lamp-toggle" for="checkbox">
+                <input type="checkbox" id="checkbox" />
+                <span class="lamp-icon">💡</span>
+                <span class="lamp-label" id="theme-text">Turn the lights ON</span>
+            </label>
         </div>
 
         <div class="stats-row">
