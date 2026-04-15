@@ -24,6 +24,7 @@ package main
 import (
 	"embed"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -43,6 +44,11 @@ var content embed.FS
 const (
 	// DefaultOutputPath is the filename for the generated technical debt report.
 	DefaultOutputPath = "report.html"
+)
+
+var (
+	// IsQuiet mode flag for suppressing non-essential output
+	IsQuiet bool
 )
 
 // Config holds the scanner settings
@@ -65,6 +71,11 @@ type Finding struct {
 }
 
 func main() {
+	// Parse command-line flags for quiet mode. This lets us suppress output if we only want the report file generated without console logs.
+	flag.BoolVar(&IsQuiet, "q", false, "Quiet mode (suppress output)")
+	flag.BoolVar(&IsQuiet, "quiet", false, "Quiet mode (suppress output)")
+	flag.Parse()
+
 	// Step 1: Initialize configuration with default search tags, ignored folders, and allowed extensions
 	config := Config{
 		SearchTags:        []string{"TODO", "FIXME", "HACK", "BUG", "SUGGESTION", "IDEA", "REWORK"},
@@ -72,12 +83,14 @@ func main() {
 		AllowedExtensions: []string{".h", ".cpp", ".html", ".go", ".java", ".py", ".ini", ".cs"},
 	}
 
-	fmt.Println("📝 ToDopher is calculating technical debt...")
+	if !IsQuiet {
+		printIntro()
+	}
 
 	// Get search directory from arguments, default to current directory
 	searchDir := "."
-	if len(os.Args) > 1 {
-		searchDir = os.Args[1]
+	if args := flag.Args(); len(args) > 0 {
+		searchDir = args[0]
 	}
 
 	// Walk the project directory and collect files to scan
@@ -97,7 +110,9 @@ func main() {
 	}
 	filesToScan = filteredFiles
 
-	fmt.Printf("Found %d files to scan. Commencing concurrent audit...\n", len(filesToScan))
+	if !IsQuiet {
+		fmt.Printf("Found %d files to scan. Commencing concurrent audit...\n", len(filesToScan))
+	}
 
 	// Concurrent Scanning Engine with Regex Matcher
 	findings := startWorkerPool(filesToScan, config)
@@ -106,7 +121,9 @@ func main() {
 	// I think it actually looks better to keep the progress bar and just print the summary on a new line. This might change.
 	//fmt.Print("\r\033[K")
 
-	fmt.Printf("\nAudit complete! Total findings across all files: %d\n", len(findings))
+	if !IsQuiet {
+		fmt.Printf("\nAudit complete! Total findings across all files: %d\n", len(findings))
+	}
 
 	// Generate static HTML report
 	err = generateHtmlReport(findings, DefaultOutputPath)
@@ -116,60 +133,14 @@ func main() {
 	}
 
 	if absPath, err := filepath.Abs(DefaultOutputPath); err == nil {
-		fmt.Printf("📊 Report generated successfully at:\n %s\n", absPath)
+		if !IsQuiet {
+			fmt.Printf("📊 Report generated successfully at:\n %s\n", absPath)
+		}
 	} else {
-		fmt.Println("📊 Report generated successfully at:\n " + DefaultOutputPath)
+		if !IsQuiet {
+			fmt.Println("📊 Report generated successfully at:\n " + DefaultOutputPath)
+		}
 	}
-}
-
-// generateHtmlReport creates a standalone HTML file containing the audit findings by injecting data into a template.
-//
-// Parameters:
-//   - findings: A slice of Finding structs to be included in the report.
-//   - outputPath: The file path where the HTML report will be saved.
-//
-// Returns:
-//   - error: Any error encountered during file creation or template execution.
-func generateHtmlReport(findings []Finding, outputPath string) error {
-	// Convert findings to JSON for embedding in the template
-	jsonData, err := json.Marshal(findings)
-	if err != nil {
-		return fmt.Errorf("failed to marshal findings to JSON: %w", err)
-	}
-
-	// Prepare data for the template
-	data := struct {
-		FindingsJSON template.JS
-	}{
-		FindingsJSON: template.JS(jsonData),
-	}
-
-	// Read and parse the template from the embedded file system
-	tmpl, err := template.ParseFS(content, "assets/template.html")
-	if err != nil {
-		return fmt.Errorf("failed to parse embedded template: %w", err)
-	}
-
-	// After generating the HTML, we also need to ensure the assets folder exists
-	// alongside the report.html on the user's machine so the dashboard can load them.
-	// This function extracts the embedded assets/ folder to the physical disk.
-	if err := extractAssets(); err != nil {
-		return fmt.Errorf("failed to extract assets: %w", err)
-	}
-
-	// Create the output file
-	file, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to create report file: %w", err)
-	}
-	defer file.Close()
-
-	// Execute the template and write to the file
-	if err := tmpl.Execute(file, data); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	return nil
 }
 
 // extractAssets copies the embedded assets/ folder to the local disk.
@@ -285,7 +256,9 @@ func startWorkerPool(filesToScan []string, config Config) []Finding {
 			// The ... tells Go to "unpack" the slice and append each element individually to allFindings.
 			allFindings = append(allFindings, findings...)
 			count++
-			printProgressBar(count, totalFiles)
+			if !IsQuiet {
+				printProgressBar(count, totalFiles)
+			}
 		}
 		done <- true
 	}()
@@ -298,34 +271,6 @@ func startWorkerPool(filesToScan []string, config Config) []Finding {
 	<-done
 
 	return allFindings
-}
-
-// printProgressBar renders a simple ASCII progress bar in the terminal to provide visual feedback
-// during the file scanning process. It uses carriage returns (\r) to update the same line.
-//
-// Parameters:
-//   - current: The number of files processed so far.
-//   - total: The total number of files to be scanned.
-func printProgressBar(current, total int) {
-	width := 40
-	percent := float64(current) / float64(total)
-	filled := int(percent * float64(width))
-
-	bar := "["
-	// The loop constructs the visual representation of the progress bar.
-	// It fills the bar with "=" characters for completed portions, a ">" character for the current position, and spaces for the remaining portion.
-	for i := 0; i < width; i++ {
-		if i < filled {
-			bar += "="
-		} else if i == filled {
-			bar += ">"
-		} else {
-			bar += " "
-		}
-	}
-	bar += "]"
-
-	fmt.Printf("\rScanning: %s %d/%d (%d%%)", bar, current, total, int(percent*100))
 }
 
 // shouldScan evaluates if a file should be audited based on its path and the provided configuration.
@@ -499,4 +444,96 @@ func fallbackBlame(filePath string, line int) (string, string) {
 		}
 	}
 	return author, date
+}
+
+// generateHtmlReport creates a standalone HTML file containing the audit findings by injecting data into a template.
+//
+// Parameters:
+//   - findings: A slice of Finding structs to be included in the report.
+//   - outputPath: The file path where the HTML report will be saved.
+//
+// Returns:
+//   - error: Any error encountered during file creation or template execution.
+func generateHtmlReport(findings []Finding, outputPath string) error {
+	// Convert findings to JSON for embedding in the template
+	jsonData, err := json.Marshal(findings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal findings to JSON: %w", err)
+	}
+
+	// Prepare data for the template
+	data := struct {
+		FindingsJSON template.JS
+	}{
+		FindingsJSON: template.JS(jsonData),
+	}
+
+	// Read and parse the template from the embedded file system
+	tmpl, err := template.ParseFS(content, "assets/template.html")
+	if err != nil {
+		return fmt.Errorf("failed to parse embedded template: %w", err)
+	}
+
+	// After generating the HTML, we also need to ensure the assets folder exists
+	// alongside the report.html on the user's machine so the dashboard can load them.
+	// This function extracts the embedded assets/ folder to the physical disk.
+	if err := extractAssets(); err != nil {
+		return fmt.Errorf("failed to extract assets: %w", err)
+	}
+
+	// Create the output file
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create report file: %w", err)
+	}
+	defer file.Close()
+
+	// Execute the template and write to the file
+	if err := tmpl.Execute(file, data); err != nil {
+		return fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	return nil
+}
+
+// printProgressBar renders a simple ASCII progress bar in the terminal to provide visual feedback
+// during the file scanning process. It uses carriage returns (\r) to update the same line.
+//
+// Parameters:
+//   - current: The number of files processed so far.
+//   - total: The total number of files to be scanned.
+func printProgressBar(current, total int) {
+	width := 40
+	percent := float64(current) / float64(total)
+	filled := int(percent * float64(width))
+
+	bar := "["
+	// The loop constructs the visual representation of the progress bar.
+	// It fills the bar with "=" characters for completed portions, a ">" character for the current position, and spaces for the remaining portion.
+	for i := 0; i < width; i++ {
+		if i < filled {
+			bar += "="
+		} else if i == filled {
+			bar += ">"
+		} else {
+			bar += " "
+		}
+	}
+	bar += "]"
+
+	fmt.Printf("\rScanning: %s %d/%d (%d%%)", bar, current, total, int(percent*100))
+}
+
+func printIntro() {
+	// Yes the ASCII art is a bit scuffed... deal with it.
+	fmt.Println("======================================================")
+	intro := `
+   ______ ___  ____  ____  ____  __ __  ______ ____
+  /_  __/ __ \/ __ \/ __ \/ __ \/ // / / ____/ __  \
+   / / / / / / / / / / / / /_/ / _  / / __/ / /_/  /
+  / / / /_/ / /_/ / /_/ / ____/ / // / /___/__/ ,_/ 
+ /_/  \____/_____/\____/_/   /_//_/ /_____/_/ |_|
+`
+	fmt.Println(intro)
+	fmt.Println("======================================================")
 }

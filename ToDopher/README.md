@@ -27,16 +27,21 @@ If no path is provided, it defaults to scanning the current directory.
 Alternatively, you can build a standalone executable:
 ```powershell
 go build -o ToDopher.exe ToDopher.go
-./ToDopher.exe "C:\Path\To\Your\UnrealProject"
 ```
 
 ## 📖 Usage
 
-TODO
+Run ToDopher from the command line, providing an optional path to scan. 
+
+```powershell
+./ToDopher.exe "C:\Path\To\Your\UnrealProject"
+```
 
 ### Command Line Options
 
-TODO
+| Flag | Shorthand | Description |
+| :--- | :--- | :--- |
+| `--quiet` | `-q` | Quiet mode. Suppresses the ASCII intro, progress bar, and status messages. Useful for CI/CD. |
 
 ## 📊 The Report
 After running the audit, ToDopher generates a `report.html` file in the project folder. 
