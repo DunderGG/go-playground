@@ -139,6 +139,12 @@
             font-size: 0.9rem;
         }
 
+        /* Ensure options inside select are readable in dark mode */
+        select option {
+            background-color: var(--container-bg);
+            color: var(--text-color);
+        }
+
         /* DataTables Dark Mode Overrides */
         table.dataTable { color: var(--text-color) !important; border-bottom: 1px solid var(--border-color) !important; }
         table.dataTable thead th { border-bottom: 1px solid var(--border-color) !important; color: var(--heading-color); }
@@ -233,7 +239,7 @@
                 <h1>ToDopher Debt Report</h1>
             </div>
             <div class="theme-switch-wrapper">
-                <span>Turn the lights on</span>
+                <span id="theme-text">Turn the lights ON</span>
                 <label class="theme-switch" for="checkbox">
                     <input type="checkbox" id="checkbox" />
                     <div class="slider"></div>
@@ -281,13 +287,25 @@
     <script>
         const findings = {{.FindingsJSON}};
         const toggleSwitch = document.querySelector('#checkbox');
+        const themeText = document.querySelector('#theme-text');
+        let tagChart;
 
         function switchTheme(e) {
-            if (e.target.checked) {
+            const isLight = e.target.checked;
+            if (isLight) {
                 document.body.classList.add('light-mode');
+                themeText.innerText = 'Turn the lights OFF';
             } else {
                 document.body.classList.remove('light-mode');
-            }    
+                themeText.innerText = 'Turn the lights ON';
+            }
+            
+            if (tagChart) {
+                const textColor = isLight ? '#24292f' : '#c9d1d9';
+                tagChart.options.plugins.legend.labels.color = textColor;
+                tagChart.options.plugins.title.color = textColor;
+                tagChart.update();
+            }
         }
 
         toggleSwitch.addEventListener('change', switchTheme, false);
@@ -352,7 +370,10 @@
             const backgroundColors = chartLabels.map(label => tagColors[label] || '#6e7681');
 
             const ctx = document.getElementById('tagChart').getContext('2d');
-            new Chart(ctx, {
+            const isLightMode = document.body.classList.contains('light-mode');
+            const initialTextColor = isLightMode ? '#24292f' : '#c9d1d9';
+
+            tagChart = new Chart(ctx, {
                 type: 'pie',
                 data: {
                     labels: chartLabels,
@@ -372,7 +393,7 @@
                             display: true,
                             position: 'right',
                             labels: {
-                                color: '#c9d1d9',
+                                color: initialTextColor,
                                 padding: 20,
                                 font: { size: 12 }
                             }
@@ -380,7 +401,7 @@
                         title: {
                             display: true,
                             text: 'Technical Debt Distribution',
-                            color: '#c9d1d9',
+                            color: initialTextColor,
                             font: { size: 16 }
                         }
                     }
