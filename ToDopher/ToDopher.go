@@ -51,6 +51,8 @@ var (
 	IsQuiet bool
 	// OutputPath is the destination for the HTML report
 	OutputPath string
+	// CustomTags is a comma-separated list of search tags
+	CustomTags string
 )
 
 // Config holds the scanner settings
@@ -80,13 +82,27 @@ func main() {
 	// The -o or --output flag allows the user to specify a custom file path for the generated report, defaulting to "report.html" if not provided.
 	flag.StringVar(&OutputPath, "o", DefaultOutputPath, "Output filename for the report")
 	flag.StringVar(&OutputPath, "output", DefaultOutputPath, "Output filename for the report")
+	// The -t or --tags flag allows the user to append custom search tags (e.g., -t "SECURITY,IMPORTANT").
+	flag.StringVar(&CustomTags, "t", "", "Comma-separated list of additional search tags")
+	flag.StringVar(&CustomTags, "tags", "", "Comma-separated list of additional search tags")
 	flag.Parse()
 
-	// Step 1: Initialize configuration with default search tags, ignored folders, and allowed extensions
+	// Initialize configuration with default search tags, ignored folders, and allowed extensions
 	config := Config{
 		SearchTags:        []string{"TODO", "FIXME", "HACK", "BUG", "SUGGESTION", "IDEA", "REWORK"},
 		IgnoreFolders:     []string{"Intermediate", "ThirdParty", ".git", "Binaries", "Saved", "Plugins"},
 		AllowedExtensions: []string{".h", ".cpp", ".html", ".go", ".java", ".py", ".ini", ".cs"},
+	}
+
+	// Append custom tags if provided via CLI
+	if CustomTags != "" {
+		tags := strings.Split(CustomTags, ",")
+		for _, tag := range tags {
+			trimmed := strings.TrimSpace(tag)
+			if trimmed != "" {
+				config.SearchTags = append(config.SearchTags, trimmed)
+			}
+		}
 	}
 
 	if !IsQuiet {
