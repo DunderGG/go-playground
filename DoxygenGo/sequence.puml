@@ -1,0 +1,36 @@
+@startuml GoDoxy Flow
+actor User
+participant "main()" as CLI
+participant "File System" as FS
+participant "Lexical Parser" as Parser
+participant "Metadata Extractor" as Meta
+participant "Markdown/HTML Generator" as Generator
+participant "Search Index Generator" as Search
+
+User -> CLI : Run GoDoxy (Source Path, Output Path)
+CLI -> FS : Scan for .h Files
+FS --> CLI : List of Header Files
+
+loop For each Header File
+    CLI -> FS : Read File Content
+    FS --> CLI : Raw C++ String
+    CLI -> Parser : Tokenize Content
+    Parser -> Parser : Identify Unreal Macros\n(UCLASS, UFUNCTION, etc.)
+    Parser --> CLI : List of Identified Tokens & Tags
+    
+    CLI -> Meta : Extract Signatures & Comments
+    Meta --> CLI : Structured Metadata\n(Params, Returns, Meta tags)
+end
+
+CLI -> CLI : Build Dependency/Cross-Ref Map
+
+loop For each Class/Struct/Enum
+    CLI -> Generator : Render Documentation (Templates)
+    Generator -> FS : Write .md / .html Files
+end
+
+CLI -> Search : Generate Search Index
+Search -> FS : Save search_index.json
+
+CLI --> User : Documentation successfully generated!
+@enduml
