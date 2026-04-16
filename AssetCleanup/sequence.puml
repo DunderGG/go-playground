@@ -1,0 +1,43 @@
+@startuml GoPurge Execution Flow
+
+actor User
+participant "main()" as Main
+participant "Project Discovery" as Discovery
+participant "Parallel Scanner\n(Worker Pool)" as Scanner
+participant "Reference Analyzer" as Analyzer
+participant "Report Generator" as Reporter
+
+User -> Main : Run GoPurge (Target: Project Dir)
+activate Main
+
+Main -> Discovery : Walk "Content/" directory
+activate Discovery
+Discovery --> Main : List of potential assets (.uasset, .umap)
+deactivate Discovery
+
+group Multi-Stage Duplicate Detection
+    Main -> Scanner : Group by File Size
+    activate Scanner
+    Main -> Scanner : Read Headers (1KB) for ties
+    Scanner -> Scanner : Compute SHA256 (Worker Pool)
+    Scanner --> Main : Duplicate matches found
+    deactivate Scanner
+end
+
+Main -> Analyzer : Scan .uasset binaries for Soft Object Paths
+activate Analyzer
+Analyzer -> Analyzer : Cross-reference with Source/ code
+Analyzer --> Main : Unreferenced asset list
+deactivate Analyzer
+
+Main -> Reporter : Compile "Waste" data
+activate Reporter
+Reporter -> Reporter : Generate report.json / report.csv
+Reporter --> User : Display Summary (Total Saved MB/GB)
+deactivate Reporter
+
+note over User : User reviews report before manual deletion
+
+deactivate Main
+
+@enduml
