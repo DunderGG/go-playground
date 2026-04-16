@@ -4,54 +4,84 @@
 // It helps developers maintain a lean project for faster backups and
 // Git LFS management.
 //
-// Features to add:
-//   - Fast parallel disk walking using Goroutines for hashing file contents.
-//   - Search for duplicate assets based on file size and MD5/SHA checksums.
-//   - Integration with .uproject files to identify assets not referenced in the graph.
-//   - Generation of a CSV or JSON report listing all "safe to delete" candidates.
+// Usage:
 //
-// Common Pitfalls:
-//   - File Locking: Unreal Editor often holds locks on .uasset files; handle "access denied" gracefully.
-//   - Symbolic Links: Recursive walking can enter infinite loops if symlinks/junctions aren't handled.
-//   - Memory Usage: Large project scans can consume massive RAM if file hashes aren't streamed.
-//   - Path Lengths: Windows has a MAX_PATH limit (260 chars) that Unreal projects often exceed.
+//	gopurge -project-dir=<path> [-output=json|csv] [-workers=N] [-large-threshold=100]
 //
-// Pitfalls found from the existing Unreal Engine filter "not used in any level/asset":
-//   - Certain game data files might be flagged as unused, which could lead to accidental deletion and project issues.
+// Flags:
 //
-// Note: This tool should always be run while the Unreal Editor is closed.
+//	-project-dir, p      Path to the root of the Unreal Engine project (required).
+//	-output, o           Report format: "json" (default) or "csv".
+//	-workers, w          Number of goroutines used for SHA-256 hashing (default 4).
+//	-large-threshold, l  Size in MB above which a file is considered "large" (default 100).
+//	-report-path, r      Output path for the report file (default: gopurge_report.<ext>).
+//
+// GoPurge is read-only — it never modifies or deletes any files.
+// Always run it while the Unreal Editor is closed.
 package main
 
 import (
+	"flag"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
 )
 
 func main() {
+	// ── CLI flags ──────────────────────────────────────────────────────────
+	var (
+		projectDir       string
+		outputFormat     string
+		workers          int
+		largeThresholdMB int64
+		reportPath       string
+	)
+	flag.StringVar(&projectDir, "project-dir", "", "Path to the Unreal Engine project root (required)")
+	flag.StringVar(&projectDir, "p", "", "Path to the Unreal Engine project root (required)")
+	flag.StringVar(&outputFormat, "output", reporter.FormatJSON, `Report format: "json" or "csv"`)
+	flag.StringVar(&outputFormat, "o", reporter.FormatJSON, `Report format: "json" or "csv"`)
+	flag.IntVar(&workers, "workers", 4, "Number of goroutines for SHA-256 hashing")
+	flag.IntVar(&workers, "w", 4, "Number of goroutines for SHA-256 hashing")
+	flag.Int64Var(&largeThresholdMB, "large-threshold", 100, "File size in MB above which a file is flagged as large")
+	flag.Int64Var(&largeThresholdMB, "l", 100, "File size in MB above which a file is flagged as large")
+	flag.StringVar(&reportPath, "report-path", "", `Output path for the report file (default: gopurge_report.<ext>)`)
+	flag.StringVar(&reportPath, "r", "", `Output path for the report file (default: gopurge_report.<ext>)`)
+	flag.Parse()
+
+	if projectDir == "" {
+		fmt.Fprintln(os.Stderr, "error: -project-dir is required")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	// Resolve default report path if not specified.
+	if reportPath == "" {
+		ext := outputFormat
+		if ext != reporter.FormatCSV {
+			ext = reporter.FormatJSON
+		}
+		reportPath = filepath.Join(".", "gopurge_report."+ext)
+	}
+
+	largeThresholdBytes := largeThresholdMB * 1024 * 1024
+
+	log.SetFlags(0)
+	log.SetPrefix("gopurge: ")
+
 	fmt.Println("🧹 GoPurge is ready to scan...")
+	fmt.Printf("   Project:   %s\n", projectDir)
+	fmt.Printf("   Output:    %s (%s)\n", reportPath, outputFormat)
+	fmt.Printf("   Workers:   %d\n", workers)
+	fmt.Printf("   Large ≥:   %d MB\n\n", largeThresholdMB)
+	// ── 1. Pre-flight validation ───────────────────────────────────────────
+	// ── 2. Project discovery ───────────────────────────────────────────────
+	// ── 3. Duplicate detection ─────────────────────────────────────────────
+	// ── 4. Large file detection ────────────────────────────────────────────
+	// ── 5. Reference analysis ──────────────────────────────────────────────
+	// ── 6. Assemble report ─────────────────────────────────────────────────
+	// ── 7. Write report ────────────────────────────────────────────────────
+}
 
-	/*
-		   DETAILED IMPLEMENTATION PLAN
-		   ----------------------------
-
-		   1. PROJECT DISCOVERY & OS OPTIMIZATION
-		      - Walk "Content/" using `filepath.WalkDir`. Skip "Intermediate/" and "DerivedDataCache/".
-		      - Use `os.Lstat` to detect and skip (or carefully follow) symbolic links.
-		      - Use `\\?\` prefix on Windows paths if lengths exceed 260 characters.
-
-		   2. MULTI-STAGE DUPLICATE DETECTION
-		      - Stage A (Size): Group files by size. Ignore files unique in size.
-		      - Stage B (Header): read first 1KB of overlapping files to differentiate quickly.
-		      - Stage C (Full Hash): Use a Worker Pool of 4-8 Goroutines.
-		      - Stream file content into `sha256.New()` via `io.Copy` to keep RAM usage under 50MB.
-
-		   3. REFERENCE ANALYSIS (THE "HARD" PART)
-		      - Unreal assets use "Soft Object Paths" (strings) to reference each other.
-		      - Search for strings like `/Game/Path/To/Asset` inside all .uasset files (binary search).
-		      - Cross-reference with Source/ code parsing (Regex for `FSoftObjectPath`).
-
-		   4. REPORT GENERATION
-		      - Print a summary of "Total Waste" in MB/GB.
-		      - Output a `clean_report.json` with categories: "Duplicate", "Unreferenced", "Large".
-			  - Never delete! User should always review the report and manually delete after verifying in Unreal Editor.
-	*/
 }

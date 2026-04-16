@@ -34,3 +34,7 @@ go.work.sum
 *.txt
 /LogServer/pb
 LogServer/go.sum
+
+# ONE PROJECT AT A TIME, CALM DOWN...
+/*
+!/AssetCleanup
