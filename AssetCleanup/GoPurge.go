@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"GoPurge/discovery"
 	"GoPurge/preflight"
 )
 
@@ -88,6 +89,18 @@ func main() {
 	fmt.Println("  ✓ Pre-flight checks passed.")
 
 	// ── 2. Project discovery ───────────────────────────────────────────────
+	fmt.Println("→ Discovering assets...")
+	var warnings []string
+	assets, err := discovery.Walk(projectDir, &warnings)
+	if err != nil {
+		log.Fatalf("discovery failed: %v", err)
+	}
+	if len(assets) == 0 {
+		fmt.Println("  No assets found — nothing to do.")
+		os.Exit(0)
+	}
+	fmt.Printf("  ✓ Found %d assets.\n", len(assets))
+
 	// ── 3. Duplicate detection ─────────────────────────────────────────────
 	// ── 4. Large file detection ────────────────────────────────────────────
 	// ── 5. Reference analysis ──────────────────────────────────────────────
