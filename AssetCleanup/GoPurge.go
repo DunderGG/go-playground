@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"GoPurge/preflight"
 )
 
 func main() {
@@ -67,6 +68,9 @@ func main() {
 
 	largeThresholdBytes := largeThresholdMB * 1024 * 1024
 
+	// SetFlags(0) to disable timestamps and other prefixes in log output and
+	// take "full control", since all warnings are collected in the report and
+	// printed in a summary at the end.
 	log.SetFlags(0)
 	log.SetPrefix("gopurge: ")
 
@@ -75,7 +79,14 @@ func main() {
 	fmt.Printf("   Output:    %s (%s)\n", reportPath, outputFormat)
 	fmt.Printf("   Workers:   %d\n", workers)
 	fmt.Printf("   Large ≥:   %d MB\n\n", largeThresholdMB)
+
 	// ── 1. Pre-flight validation ───────────────────────────────────────────
+	fmt.Println("→ Running pre-flight checks...")
+	if err := preflight.Validate(projectDir); err != nil {
+		log.Fatalf("pre-flight failed: %v", err)
+	}
+	fmt.Println("  ✓ Pre-flight checks passed.")
+
 	// ── 2. Project discovery ───────────────────────────────────────────────
 	// ── 3. Duplicate detection ─────────────────────────────────────────────
 	// ── 4. Large file detection ────────────────────────────────────────────
