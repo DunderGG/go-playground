@@ -1,4 +1,4 @@
-# GoPurge 🧹
+# <img width="64" height="64" alt="appicon" src="https://github.com/user-attachments/assets/5613e671-41d8-4f8f-bae0-b320d777ce7b" /> GoPurge
 
 GoPurge is a high-performance, read-only CLI diagnostic tool written in Go for Unreal Engine developers. It scans your project's `Content/` and `Source/` directories to identify redundant assets, unreferenced files, and large "waste" that bloats Git LFS and slows down backups.
 
