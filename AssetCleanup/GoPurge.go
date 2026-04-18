@@ -37,7 +37,7 @@ import (
 )
 
 func main() {
-	// ── CLI flags ──────────────────────────────────────────────────────────
+	// ── 0. CLI flags ───────────────────────────────────────────────────────
 	var (
 		projectDir       string
 		outputFormat     string

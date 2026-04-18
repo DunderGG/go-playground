@@ -8,11 +8,11 @@ participant "Parallel Scanner\n(Worker Pool)" as Scanner
 participant "Reference Analyzer" as Analyzer
 participant "Report Generator" as Reporter
 
-' ── 1. CLI INPUT ─────────────────────────────────────────────────────────────
+' ── 0. CLI INPUT ─────────────────────────────────────────────────────────────
 User -> Main : gopurge -project-dir=<path> [-output=json|csv]\n[-workers=N] [-large-threshold=100MB]
 activate Main
 
-' ── 2. PREREQUISITES VALIDATION ───────────────────────────────────────────────
+' ── 1. PREREQUISITES VALIDATION ───────────────────────────────────────────────
 Main -> Validator : Validate project directory
 activate Validator
 Validator -> Validator : Check .uproject file exists
@@ -27,7 +27,7 @@ else Validation passes
     Validator --> Main : OK — safe to proceed
     deactivate Validator
 
-    ' ── 3. PROJECT DISCOVERY ─────────────────────────────────────────────────
+    ' ── 2. PROJECT DISCOVERY ─────────────────────────────────────────────────
     Main -> Discovery : Walk "Content/" directory\n(skip Intermediate/, DerivedDataCache/)
     activate Discovery
     Discovery -> Discovery : os.Lstat — skip symlinks / junctions
@@ -41,7 +41,7 @@ else Validation passes
         Discovery --> Main : Full asset list (.uasset, .umap) + sizes
         deactivate Discovery
 
-        ' ── 4. MULTI-STAGE DUPLICATE DETECTION ──────────────────────────────
+        ' ── 3. MULTI-STAGE DUPLICATE DETECTION ──────────────────────────────
         Main -> Scanner : scanForDuplicates(assetList, workers)
         activate Scanner
         note right of Scanner
@@ -55,14 +55,14 @@ else Validation passes
         Scanner --> Main : DuplicateGroups []FileGroup
         deactivate Scanner
 
-        ' ── 5. LARGE FILE DETECTION ──────────────────────────────────────────
+        ' ── 4. LARGE FILE DETECTION ──────────────────────────────────────────
         Main -> Scanner : findLargeFiles(assetList, threshold)
         activate Scanner
         Scanner --> Main : LargeFiles []FileEntry
         deactivate Scanner
 
-        ' ── 6. REFERENCE ANALYSIS ────────────────────────────────────────────
-        Main -> Analyzer : analyzeReferences(assetList)
+        ' ── 5. REFERENCE ANALYSIS ────────────────────────────────────────────
+        Main -> Analyzer : analyzeReferences(projectDir, assetList, &warnings)
         activate Analyzer
         note right of Analyzer
             Receives full asset list as the "known universe"
@@ -74,11 +74,14 @@ else Validation passes
         Analyzer --> Main : UnreferencedAssets []FileEntry
         deactivate Analyzer
 
-        ' ── 7. REPORT GENERATION ─────────────────────────────────────────────
+        ' ── 6. ASSEMBLE REPORT ────────────────────────────────────────────────
+        Main -> Main : computeTotalWaste(duplicates, largeFiles, unreferenced)
+        Main -> Main : model.Report{ GeneratedAt, ProjectDir, Duplicates, LargeFiles, Unreferenced, TotalWasteBytes, Warnings }
+
+        ' ── 7. WRITE REPORT ──────────────────────────────────────────────────
         Main -> Reporter : generateReport(duplicates, largeFiles, unreferenced)
         activate Reporter
         Reporter -> Reporter : Write report.json (--output=json, default)\nor report.csv (--output=csv)
-        Reporter -> Reporter : Compute total reclaimable MB/GB
         Reporter --> User : Print summary to stdout\n(Duplicates: N, Unreferenced: N, Large: N, Total: X GB)
         Reporter --> User : "Report written to <output file>"
         deactivate Reporter

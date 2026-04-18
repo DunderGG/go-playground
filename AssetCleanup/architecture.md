@@ -14,7 +14,7 @@ after reviewing it in the Unreal Editor.
 
 ```
 GoPurge/
-├── main.go               — Entry point, CLI flag parsing, pipeline orchestration
+├── GoPurge.go            — Entry point, CLI flag parsing, pipeline orchestration
 ├── preflight/
 │   └── preflight.go      — Pre-flight validation (uproject, editor process, Content/ access)
 ├── discovery/
@@ -40,9 +40,10 @@ All packages share these types. Defining them up-front prevents import cycles.
 ```go
 // FileEntry represents a single discovered asset file.
 type FileEntry struct {
-    Path    string // absolute, \\?\-prefixed on Windows if > 260 chars
-    Size    int64  // bytes
-    SHA256  string // populated only after hashing; empty until then
+    Path           string // absolute, \\?\-prefixed on Windows if > 260 chars
+    Size           int64  // bytes
+    SHA256         string // populated only after hashing; empty until then
+    VerifyManually bool   // true if this entry may be a false positive (e.g. DataTable)
 }
 
 // FileGroup is a set of files confirmed to be identical (same SHA256).
@@ -53,12 +54,13 @@ type FileGroup struct {
 
 // Report is the top-level output structure written to disk.
 type Report struct {
-    GeneratedAt    time.Time
-    ProjectDir     string
-    Duplicates     []FileGroup  // groups of 2+ identical files
-    LargeFiles     []FileEntry  // files exceeding the size threshold
-    Unreferenced   []FileEntry  // assets with zero inbound references
-    TotalWasteBytes int64       // sum of reclaimable bytes across all categories
+    GeneratedAt     time.Time
+    ProjectDir      string
+    Duplicates      []FileGroup  // groups of 2+ identical files
+    LargeFiles      []FileEntry  // files exceeding the size threshold
+    Unreferenced    []FileEntry  // assets with zero inbound references
+    TotalWasteBytes int64        // sum of reclaimable bytes across all categories
+    Warnings        []string     // non-fatal issues encountered during the scan
 }
 ```
 
@@ -143,7 +145,7 @@ a note explaining the risk.
 Accepts the fully-populated `model.Report` and writes it to disk.
 
 - **JSON (default):** `encoding/json` with `MarshalIndent` for human readability.
-- **CSV:** One row per flagged file; columns: `Category`, `Path`, `SizeBytes`, `SHA256`, `Notes`.
+- **CSV:** One row per flagged file; columns: `Category`, `Path`, `SizeBytes`, `SHA256`, `VerifyManually`, `Notes`.
 - Prints a one-page summary to stdout:
   ```
   GoPurge scan complete

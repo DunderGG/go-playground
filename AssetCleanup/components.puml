@@ -51,8 +51,9 @@ package "model" {
 User --> Main : CLI flags\n(-project-dir, -output,\n-workers, -large-threshold)
 Main --> User : stdout summary\n+ exit code
 
-Preflight --> OS      : Check process list\n(UnrealEditor.exe)
-Discovery --> UEProject : WalkDir Content/
+Preflight --> OS         : Check process list\n(UnrealEditor.exe)
+Preflight --> UEProject  : Check .uproject exists\n+ Content/ accessible
+Discovery --> UEProject  : WalkDir Content/
 Duplicates --> UEProject : Read file bytes\n(header + full hash)
 Analyzer --> UEProject  : Read .uasset binaries\n+ Source/ files
 Reporter --> OS         : Write report.json / .csv
