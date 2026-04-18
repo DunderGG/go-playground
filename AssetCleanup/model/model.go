@@ -39,3 +39,35 @@ type FileGroup struct {
 	Files []FileEntry
 }
 
+// Report is the top-level output structure assembled by main and written to
+// disk by the reporter. It captures every category of waste found during a
+// single GoPurge run.
+type Report struct {
+	// GeneratedAt is the UTC timestamp when the report was produced.
+	GeneratedAt time.Time
+
+	// ProjectDir is the absolute path to the scanned Unreal Engine project.
+	ProjectDir string
+
+	// Duplicates is the list of file groups where every member is an exact
+	// byte-for-byte copy of the others. Keeping one copy and deleting the
+	// rest would reclaim wasted space.
+	Duplicates []FileGroup
+
+	// LargeFiles is the list of individual assets that exceed the configured
+	// size threshold (default 100 MB).
+	LargeFiles []FileEntry
+
+	// Unreferenced is the list of assets that have zero inbound references
+	// in the project's static dependency graph.
+	Unreferenced []FileEntry
+
+	// TotalWasteBytes is the sum of reclaimable bytes across all three
+	// categories. Duplicate groups count only the space taken by the
+	// redundant copies (i.e. group size × (n-1)).
+	TotalWasteBytes int64
+
+	// Warnings is a list of non-fatal issues encountered during the scan,
+	// such as access-denied errors or skipped symbolic links.
+	Warnings []string
+}

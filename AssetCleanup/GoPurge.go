@@ -28,9 +28,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"GoPurge/analyzer"
 	"GoPurge/discovery"
 	"GoPurge/model"
 	"GoPurge/preflight"
+	"GoPurge/reporter"
 	"GoPurge/scanner"
 )
 
@@ -128,7 +130,67 @@ func main() {
 	fmt.Printf("  ✓ Found %d unreferenced asset(s).\n", len(unreferenced))
 
 	// ── 6. Assemble report ─────────────────────────────────────────────────
+	report := model.Report{
+		GeneratedAt:     time.Now().UTC(),
+		ProjectDir:      projectDir,
+		Duplicates:      duplicates,
+		LargeFiles:      largeFiles,
+		Unreferenced:    unreferenced,
+		TotalWasteBytes: computeTotalWaste(duplicates, largeFiles, unreferenced),
+		Warnings:        warnings,
+	}
+
 	// ── 7. Write report ────────────────────────────────────────────────────
+	fmt.Println("→ Writing report...")
+	if err := reporter.Write(report, reportPath, outputFormat); err != nil {
+		log.Fatalf("report generation failed: %v", err)
+	}
 }
 
+// computeTotalWaste estimates the number of reclaimable bytes across all three
+// waste categories. For duplicate groups, only the redundant copies are counted
+// (i.e. group size × (n-1) copies). Large files and unreferenced assets are
+// counted in full, but de-duplicated against each other to avoid double-counting.
+func computeTotalWaste(duplicates []model.FileGroup, largeFiles, unreferenced []model.FileEntry) int64 {
+	// counted keeps track of file paths we've already included in the total to avoid double-counting.
+	counted := make(map[string]bool)
+	var total int64
+
+	for _, group := range duplicates {
+		// Skip groups with a single file, as they don't represent any waste.
+		if len(group.Files) < 2 {
+			continue
+		}
+
+		// For a group of n identical files, only (n-1) of them are redundant.
+		redundantCopies := int64(len(group.Files) - 1)
+
+		// The size of each file in the group is the same, so we can take the size of the first file.
+		total += group.Files[0].Size * redundantCopies
+		
+		// Mark all files in this group as counted to avoid double-counting if they also appear in largeFiles or unreferenced.
+		for _, file := range group.Files {
+			counted[file.Path] = true
+		}
+	}
+
+	for _, file := range largeFiles {
+		// Skip files that have already been counted in duplicate groups.
+		if counted[file.Path] {
+			continue
+		}
+		total += file.Size
+		counted[file.Path] = true
+	}
+
+	for _, file := range unreferenced {
+		// Skip files that have already been counted in duplicate groups or large files.
+		if counted[file.Path] {
+			continue
+		}
+		total += file.Size
+		counted[file.Path] = true
+	}
+
+	return total
 }
