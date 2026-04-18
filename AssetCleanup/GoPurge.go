@@ -120,6 +120,13 @@ func main() {
 	fmt.Printf("  ✓ Found %d large file(s) (≥ %d MB).\n", len(largeFiles), largeThresholdMB)
 
 	// ── 5. Reference analysis ──────────────────────────────────────────────
+	fmt.Println("→ Analysing asset references...")
+	unreferenced, err := analyzer.AnalyzeReferences(projectDir, assets, &warnings)
+	if err != nil {
+		log.Fatalf("reference analysis failed: %v", err)
+	}
+	fmt.Printf("  ✓ Found %d unreferenced asset(s).\n", len(unreferenced))
+
 	// ── 6. Assemble report ─────────────────────────────────────────────────
 	// ── 7. Write report ────────────────────────────────────────────────────
 }
