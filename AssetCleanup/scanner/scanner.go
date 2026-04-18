@@ -20,7 +20,6 @@ import "GoPurge/model"
 //  3. Full SHA-256 — surviving candidates are hashed in parallel by a worker
 //     pool whose size is controlled by the workers parameter.
 //
-//	"assets" is the full list of discovered files, which is treated as the "known universe" for reference analysis.
 //  Only entries with identical sizes and headers are hashed, and
 //  only groups of two or more identical hashes are returned as duplicates.
 //
@@ -43,3 +42,8 @@ func ScanForDuplicates(assets []model.FileEntry, workers int, warnings *[]string
 	return groups, nil
 }
 
+// FindLargeFiles returns all entries whose size is greater than or equal to
+// thresholdBytes. This is a single-pass filter and requires no concurrency.
+func FindLargeFiles(assets []model.FileEntry, thresholdBytes int64) []model.FileEntry {
+	return filterLargeFiles(assets, thresholdBytes)
+}

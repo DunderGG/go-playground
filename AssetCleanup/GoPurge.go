@@ -27,8 +27,11 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
 	"GoPurge/discovery"
+	"GoPurge/model"
 	"GoPurge/preflight"
+	"GoPurge/scanner"
 )
 
 func main() {
@@ -89,6 +92,8 @@ func main() {
 	fmt.Println("  ✓ Pre-flight checks passed.")
 
 	// ── 2. Project discovery ───────────────────────────────────────────────
+	//	Throughout the code, we use "assets" as the full list of discovered files,
+	//  which is treated as the "known universe" for reference analysis.
 	fmt.Println("→ Discovering assets...")
 	var warnings []string
 	assets, err := discovery.Walk(projectDir, &warnings)
@@ -110,6 +115,10 @@ func main() {
 	fmt.Printf("  ✓ Found %d duplicate group(s).\n", len(duplicates))
 
 	// ── 4. Large file detection ────────────────────────────────────────────
+	fmt.Println("→ Scanning for large files...")
+	largeFiles := scanner.FindLargeFiles(assets, largeThresholdBytes)
+	fmt.Printf("  ✓ Found %d large file(s) (≥ %d MB).\n", len(largeFiles), largeThresholdMB)
+
 	// ── 5. Reference analysis ──────────────────────────────────────────────
 	// ── 6. Assemble report ─────────────────────────────────────────────────
 	// ── 7. Write report ────────────────────────────────────────────────────

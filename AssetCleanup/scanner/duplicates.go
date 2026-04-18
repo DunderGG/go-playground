@@ -143,22 +143,22 @@ func hashCandidates(candidates [][]model.FileEntry, workers int, warnings *[]str
 	}()
 
 	// 1. The Workers Start First (But Wait)
-	// Between duplicates.go:118-132, we spawn the worker goroutines.
-	// These workers immediately run for entry := range jobs.
-	// Because the jobs channel is empty at this moment, all N workers pause (block) right there.
-	// They are not consuming CPU; they are simply waiting for something to arrive in the channel.
+	//    Between duplicates.go:118-132, we spawn the worker goroutines.
+	//    These workers immediately run for entry := range jobs.
+	//    Because the jobs channel is empty at this moment, all N workers pause (block) right there.
+	//    They are not consuming CPU; they are simply waiting for something to arrive in the channel.
 
 	// 2. The Feeder Starts (The "Unlock")
-	// At duplicates.go:162-167, we start the "feeder" goroutine.
-	// As soon as this goroutine puts the first FileEntry into jobs,
-	// one of the waiting workers wakes up instantly, takes the entry, and starts hashing.
-	// This continues until all files are fed and the channel is closed.
+	//    At duplicates.go:162-167, we start the "feeder" goroutine.
+	//    As soon as this goroutine puts the first FileEntry into jobs,
+	//    one of the waiting workers wakes up instantly, takes the entry, and starts hashing.
+	//    This continues until all files are fed and the channel is closed.
 
 	// 3. Why we don't do it sequentially
-	// If you tried to feed the channel before starting the workers
-	// The program would crash (deadlock). Since the channel has a limited capacity (workers),
-	// the feeder would fill it up and then pause, waiting for someone to take an item.
-	// If no workers have been started yet, no one will ever take an item, and the program will hang forever.
+	//    If you tried to feed the channel before starting the workers
+	//    The program would crash (deadlock). Since the channel has a limited capacity (workers),
+	//    the feeder would fill it up and then pause, waiting for someone to take an item.
+	//    If no workers have been started yet, no one will ever take an item, and the program will hang forever.
 	go func() {
 		for _, entry := range allCandidates {
 			jobs <- entry
@@ -200,17 +200,18 @@ func hashCandidates(candidates [][]model.FileEntry, workers int, warnings *[]str
 // If we have 4 workers hashing 2GB files simultaneously, our app would suddenly demand 8GB of RAM and likely crash.
 //
 // By using io.Copy(h, f): We are "streaming" the file.
-// Go reads a small chunk (usually 32KB) into a tiny buffer, passes it to the hash function, and
-// then reuses that same tiny buffer for the next chunk.
-// This keeps our RAM usage at ~50MB regardless of whether the files being hashed are 1KB or 10GB.
+//    Go reads a small chunk (usually 32KB) into a tiny buffer, passes it to the hash function, and
+//    then reuses that same tiny buffer for the next chunk.
+//    This keeps our RAM usage at ~50MB regardless of whether the files being hashed are 1KB or 10GB.
 //
 // If we look at the source code for io.Copy, it does something like this behind the scenes:
-// Buffer Allocation: It creates a small, fixed-size internal buffer (usually 32 KB).
+// Buffer Allocation: 
+//    It creates a small, fixed-size internal buffer (usually 32 KB).
 // The Loop:
-// It reads 32 KB from the source (os.File).
-// It writes that 32 KB to the destination (sha256.New()).
-// It repeats until the end of the file is reached.
-// The crucial part is that io.Copy never holds the entire file in memory at once.
+//    It reads 32 KB from the source (os.File).
+//    It writes that 32 KB to the destination (sha256.New()).
+//    It repeats until the end of the file is reached.
+//    The crucial part is that io.Copy never holds the entire file in memory at once.
 func hashFile(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
