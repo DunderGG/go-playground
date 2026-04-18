@@ -102,6 +102,13 @@ func main() {
 	fmt.Printf("  ✓ Found %d assets.\n", len(assets))
 
 	// ── 3. Duplicate detection ─────────────────────────────────────────────
+	fmt.Println("→ Scanning for duplicates...")
+	duplicates, err := scanner.ScanForDuplicates(assets, workers, &warnings)
+	if err != nil {
+		log.Fatalf("duplicate scan failed: %v", err)
+	}
+	fmt.Printf("  ✓ Found %d duplicate group(s).\n", len(duplicates))
+
 	// ── 4. Large file detection ────────────────────────────────────────────
 	// ── 5. Reference analysis ──────────────────────────────────────────────
 	// ── 6. Assemble report ─────────────────────────────────────────────────
