@@ -11,11 +11,16 @@ GoPurge is a high-performance, read-only CLI diagnostic tool written in Go for U
 - **Large File Scanning:** Quickly flags assets exceeding a configurable size threshold.
 - **OS Optimized:** Handles Windows `MAX_PATH` limits (>260 characters) using the `\\?\` prefix and safely skips symbolic links/junctions.
 - **Low Memory Footprint:** Streams file contents during hashing to keep RAM usage under ~50MB regardless of project size.
+- **Non-Fatal Warnings:** Access-denied errors and skipped symlinks are collected and included in the report rather than aborting the scan.
 
 ## Installation
 
 ```bash
+# Windows
 go build -o gopurge.exe .
+
+# macOS / Linux
+go build -o gopurge .
 ```
 
 ## Usage
@@ -23,32 +28,38 @@ go build -o gopurge.exe .
 Run GoPurge from your terminal, pointing it to the root of your Unreal Engine project.
 
 ```bash
-gopurge -project-dir="C:/Projects/MyUnrealProject"
+# Windows
+gopurge.exe -project-dir="C:/Projects/MyUnrealProject"
+
+# macOS / Linux
+./gopurge -project-dir="/home/user/MyUnrealProject"
 ```
 
 ### Command Line Options
 
-| Flag | Description | Default |
-| :--- | :--- | :--- |
-| `-project-dir` | **(Required)** Path to the Unreal Engine project root. | |
-| `-output` | Report format: `json` or `csv`. | `json` |
-| `-workers` | Number of concurrent goroutines for hashing. | `4` |
-| `-large-threshold` | Size in MB above which a file is flagged as "large". | `100` |
-| `-report-path` | Custom output path for the report file. | `./gopurge_report.json` |
+Each flag also has a short alias.
+
+| Flag | Short | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `-project-dir` | `-p` | **(Required)** Path to the Unreal Engine project root. | |
+| `-output` | `-o` | Report format: `json` or `csv`. | `json` |
+| `-workers` | `-w` | Number of concurrent goroutines for hashing. | `4` |
+| `-large-threshold` | `-l` | Size in MB above which a file is flagged as "large". | `100` |
+| `-report-path` | `-r` | Custom output path for the report file. | `./gopurge_report.json` |
 
 ## How it Works
 
-1. **Pre-flight Check:** Verifies a `.uproject` file exists and ensures the Unreal Editor is closed to avoid file locks.
-2. **Discovery:** Recursively walks the `Content/` folder, skipping `Intermediate/`, `Saved/`, and `Binaries/`.
+1. **Pre-flight Checks:** Verifies that a `.uproject` file exists in the target directory, that the `Content/` folder is accessible, and that the Unreal Editor is not currently running (to avoid file locks).
+2. **Discovery:** Recursively walks the `Content/` folder, skipping `Intermediate/`, `DerivedDataCache/`, `Saved/`, and `Binaries/`.
 3. **Scan:**
-   - **Duplicates:** Groups files by size → 1KB header → Full Hash.
-   - **Large Files:** Simple size-based filter.
-   - **References:** Parses binary assets for strings like `/Game/Path/To/Asset`.
-4. **Report:** Assembles findings into a formatted report and prints a summary of "Total Reclaimable" space.
+   - **Duplicates:** Groups files by size → 1KB header → Full SHA-256 hash (parallel worker pool).
+   - **Large Files:** Simple single-pass size-based filter.
+   - **References:** Parses binary assets for Soft Object Path strings like `/Game/Path/To/Asset` and scans C++ source for `FSoftObjectPath`.
+4. **Report:** Assembles findings into a formatted report, prints a summary of "Total Reclaimable" space, and lists any non-fatal warnings (e.g. skipped symlinks or access-denied files) encountered during the scan.
 
 ## Important Note
 
-GoPurge identifies "potential" waste. Certain assets (like DataTables or assets loaded purely via dynamic string paths in C++) may appear unreferenced even if they are used. **Always review the generated report and verify assets in the Unreal Editor before manually deleting them.**
+GoPurge identifies "potential" waste. Certain assets (like DataTables or assets loaded purely via dynamic string paths in C++) may appear unreferenced even if they are used at runtime — these entries are flagged with a `VerifyManually` warning in the report. **Always review the generated report and verify assets in the Unreal Editor before manually deleting them.**
 
 ---
 
