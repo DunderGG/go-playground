@@ -16,7 +16,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"GoPurge/model"
 )
@@ -31,6 +33,11 @@ const (
 // Write persists the report to outputPath in the specified format (json or csv)
 // and prints a one-page summary to stdout.
 func Write(report model.Report, outputPath, format string) error {
+	// Normalise all paths to forward slashes so they are copy-paste friendly
+	// in the report file. Windows File Explorer, PowerShell, and the Unreal
+	// Editor all accept forward slashes, and they require no escaping in JSON.
+	report = normalizeReportPaths(report)
+
 	switch format {
 	case FormatCSV:
 		if err := writeCSV(report, outputPath); err != nil {
@@ -163,4 +170,33 @@ func countDuplicateFiles(groups []model.FileGroup) int {
 		total += len(group.Files)
 	}
 	return total
+}
+
+// normalizeReportPaths returns a shallow copy of report with all file paths
+// converted to forward slashes. This makes paths copy-paste friendly in the
+// report file — Windows File Explorer, PowerShell, and the Unreal Editor all
+// accept forward slashes, and they require no escaping in JSON (unlike `\`).
+func normalizeReportPaths(report model.Report) model.Report {
+	report.ProjectDir = toForwardSlash(report.ProjectDir)
+
+	for i := range report.Duplicates {
+		for j := range report.Duplicates[i].Files {
+			report.Duplicates[i].Files[j].Path = toForwardSlash(report.Duplicates[i].Files[j].Path)
+		}
+	}
+	for i := range report.LargeFiles {
+		report.LargeFiles[i].Path = toForwardSlash(report.LargeFiles[i].Path)
+	}
+	for i := range report.Unreferenced {
+		report.Unreferenced[i].Path = toForwardSlash(report.Unreferenced[i].Path)
+	}
+	return report
+}
+
+// toForwardSlash converts a path to forward slashes and strips any \\?\ 
+// extended-path prefix that was added for internal scanning purposes.
+func toForwardSlash(path string) string {
+	// Strip the Windows extended-path prefix before writing to the report.
+	path = strings.TrimPrefix(path, `\\?\`)
+	return filepath.ToSlash(path)
 }
