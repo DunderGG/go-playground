@@ -88,9 +88,10 @@ Items are grouped by theme and loosely ordered by priority within each section.
 
 ## 📊 Reporting
 
-- [x] **JSON report output (default)**
+- [x] **JSON report output**
   The full `model.Report` is serialised with `json.MarshalIndent` into a
   human-readable `.json` file containing all three waste categories and warnings.
+  Available via `-output=json`.
 
 - [x] **CSV report output**
   An alternative flat `.csv` format is available via `-output=csv`, with one row per
@@ -111,10 +112,17 @@ Items are grouped by theme and loosely ordered by priority within each section.
   `LargeFileBytes`, and `UnreferencedBytes` fields to `model.Report` so tooling can
   process each category independently.
 
-- [ ] **HTML report output**
-  Add a `-output=html` option that generates a self-contained HTML file with sortable
-  tables, grouping, and colour-coded `VerifyManually` warnings — easier to share with
-  non-technical team members than raw JSON or CSV.
+- [x] **HTML report output (default)**
+  Generates a self-contained dark/light-theme HTML dashboard with Chart.js charts
+  (waste-by-category doughnut, top large files bar), DataTables for sortable/searchable
+  file lists, and an accordion for duplicate groups — easier to share with non-technical
+  team members than raw JSON or CSV.
+
+  - [ ] **Portable app icon**
+    Embed `appicon.png` into the HTML report as a base64 data URI so the icon is visible
+    regardless of where the `.html` file is opened. Requires passing the PNG bytes through
+    the reporter pipeline and typing the field as `template.URL` to bypass Go's
+    `html/template` sanitiser.
 
 - [ ] **Diff mode — compare two reports**
   Add a `gopurge diff report-a.json report-b.json` subcommand that shows which waste

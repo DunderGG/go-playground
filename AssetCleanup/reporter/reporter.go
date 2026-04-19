@@ -1,8 +1,9 @@
-// Package reporter writes the completed scan results to disk and prints a
+﻿// Package reporter writes the completed scan results to disk and prints a
 // human-readable summary to stdout.
 //
 // Supported output formats:
-//   - JSON (default): encoding/json with MarshalIndent for human readability.
+//   - HTML (default): self-contained dashboard with SVG charts and sortable tables.
+//   - JSON: encoding/json with MarshalIndent for human readability.
 //   - CSV: one row per flagged file with columns Category, Path, SizeBytes,
 //     SHA256, VerifyManually, Notes.
 //
@@ -30,8 +31,8 @@ const (
 	FormatCSV = "csv"
 )
 
-// Write persists the report to outputPath in the specified format (json or csv)
-// and prints a one-page summary to stdout.
+// Write persists the report to outputPath in the specified format (html, json,
+// or csv) and prints a one-page summary to stdout.
 func Write(report model.Report, outputPath, format string) error {
 	// Normalise all paths to forward slashes so they are copy-paste friendly
 	// in the report file. Windows File Explorer, PowerShell, and the Unreal
@@ -39,14 +40,20 @@ func Write(report model.Report, outputPath, format string) error {
 	report = normalizeReportPaths(report)
 
 	switch format {
+	case FormatHTML:
+		if err := writeHTML(report, outputPath); err != nil {
+			return err
+		}
 	case FormatCSV:
 		if err := writeCSV(report, outputPath); err != nil {
 			return err
 		}
-	default: // JSON is the default.
+	case FormatJSON:
 		if err := writeJSON(report, outputPath); err != nil {
 			return err
 		}
+	default:
+		return fmt.Errorf("unknown report format %q: use html, json, or csv", format)
 	}
 	printSummary(report, outputPath)
 	return nil
@@ -149,7 +156,11 @@ func printSummary(report model.Report, outputPath string) {
 	fmt.Printf("  Unreferenced:  %d files\n", len(report.Unreferenced))
 	fmt.Println("─────────────────────────────────────────────────────────────")
 	fmt.Printf("  Total reclaimable: ~%.2f GB\n", reclaimableGB)
-	fmt.Printf("  Report written to: %s\n", outputPath)
+	absPath, err := filepath.Abs(outputPath)
+	if err != nil {
+		absPath = outputPath
+	}
+	fmt.Printf("  Report written to: %s\n", absPath)
 	fmt.Println()
 	fmt.Println("  ⚠ Never delete automatically.")
 	fmt.Println("    Review the report and verify each entry in Unreal Editor")
